@@ -41,7 +41,7 @@ struct Camera
 		fov = 70.0f;
 		nearPlane = 0.1f;
 		farPlane = 1000.0f;
-		moveSpeed = 50.0f;
+		moveSpeed = 25.0f;
 		mouseSpeed = 10.0f;
 		pitch = -37.0f;
 		yaw = 330.0f;
@@ -286,6 +286,7 @@ struct Mesh
 		unsigned long pos = inputFile.find_last_of("/");
 		mtlBasePath = inputFile.substr(0, pos + 1);
 
+
 		std::vector<tinyobj::shape_t> obj_shapes;
 		std::vector<tinyobj::material_t> obj_materials;
 		std::vector<Material> materials;
@@ -466,21 +467,22 @@ dim3 block, grid;
 Camera* camera;
 Sphere spheres[] =
 {
-	Sphere(vec3(20, 6, 14), 6, Material(TRANS,  vec3(1))),
-	Sphere(vec3(-14, 6, -20), 6, Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
-	Sphere(vec3(-14, 6, 14), 6, Material(SPEC,  vec3(1))),
-	Sphere(vec3(14, 6, -14), 6, Material(GLOSS,  vec3(1)))
+	Sphere(vec3(20, 8, 14), 8, Material(TRANS,  vec3(1))),
+	Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
+	Sphere(vec3(-14, 8, 14), 8, Material(SPEC,  vec3(1))),
+	Sphere(vec3(14, 8, -14), 8, Material(GLOSS,  vec3(1)))
 };
 Mesh meshes[] =
 {
-	CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
-	Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF)),
-	Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
-	//CreateBox(vec3(0, 0, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75))),
-	CreateBox(vec3(30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.0, 0.0, 0.75))),
-	CreateBox(vec3(-30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.75, 0.0, 0.0))),
-	CreateBox(vec3(0, 15, 30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75))),
-	CreateBox(vec3(0, 15, -30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75)))
+	Mesh(vec3(0,0,0), "Cornell.obj")
+	//CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
+	//Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF)),
+	//Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
+	////CreateBox(vec3(0, 0, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75))),
+	//CreateBox(vec3(30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.0, 0.0, 0.75))),
+	//CreateBox(vec3(-30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.75, 0.0, 0.0))),
+	//CreateBox(vec3(0, 15, 30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75))),
+	//CreateBox(vec3(0, 15, -30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75)))
 };
 
 #pragma endregion Scene Variables
