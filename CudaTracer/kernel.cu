@@ -47,11 +47,13 @@ struct Camera
 		yaw = 330.0f;
 		view = mat4(0);
 		proj = mat4(0);
+		aperture = 0;
+		focalDistance = 0.1f;
 	}
 
 	__device__ Ray GetRay(curandState* randState, int x, int y)
 	{
-		float jitterValueX = curand_uniform(randState) - 0.5;
+		/*float jitterValueX = curand_uniform(randState) - 0.5;
 		float jitterValueY = curand_uniform(randState) - 0.5;
 
 		vec3 wDir = glm::normalize(-forward);
@@ -66,7 +68,41 @@ struct Camera
 		float imPlaneUPos = left + (right - left)*(((float)x + jitterValueX) / (float)width);
 		float imPlaneVPos = bottom + (top - bottom)*(((float)y + jitterValueY) / (float)height);
 
-		return Ray(position, (glm::normalize(imPlaneUPos * uDir + imPlaneVPos * vDir - wDir)));
+		return Ray(position, (glm::normalize(imPlaneUPos * uDir + imPlaneVPos * vDir - wDir)));*/
+
+		vec3 horizontalAxis = normalize(cross(forward, up));
+		vec3 verticalAxis = cross(horizontalAxis, forward);
+		vec3 middle = position + forward;
+		vec3 horizontal = horizontalAxis * tan(fov * pi<float>() / 360.0f);
+		vec3 vertical = verticalAxis * tan(-fov * pi<float>() / 360.0f);
+
+		float jitterValueX = curand_uniform(randState) - 0.5;
+		float jitterValueY = curand_uniform(randState) - 0.5;
+		float sx = (jitterValueX + x) / width;
+		float sy = (jitterValueY + y) / height;
+
+		vec3 pointOnPlaneOneUnitAwayFromEye = middle + (horizontal * ((2 * sx) - 1)) + (vertical * ((2 * sy) - 1));
+		vec3 pointOnImagePlane = position + ((pointOnPlaneOneUnitAwayFromEye - position) * focalDistance);
+
+		vec3 aperturePoint = vec3(0, 0, 0);
+
+		if (aperture >= EPSILON)
+		{
+			float random1 = curand_uniform(randState);
+			float random2 = curand_uniform(randState);
+
+			float angle = two_pi<float>() * random1;
+			float distance = aperture * sqrt(random2);
+			float apertureX = cos(angle) * distance;
+			float apertureY = sin(angle) * distance;
+
+			aperturePoint = position + (horizontalAxis * apertureX) + (verticalAxis * apertureY);
+		}
+		else
+		{
+			aperturePoint = position;
+		}
+		return Ray(aperturePoint, normalize(pointOnImagePlane - aperturePoint));
 	}
 
 	void UpdateScreen(int width, int height)
@@ -116,6 +152,9 @@ struct Camera
 	float fov;
 	float aspectRatio;
 	float pitch, yaw;
+
+	// fov
+	float aperture, focalDistance;
 
 	vec3 position;
 	vec3 forward, up, right;
@@ -637,24 +676,6 @@ __device__ ObjectIntersection Intersect(Ray ray, Sphere* spheres, Mesh* meshes, 
 	return intersection;
 }
 
-__device__ vec3 TraceRay(Ray ray, Sphere* spheres, int count, curandState* randState)
-{
-	vec3 resultColor = vec3(0,0,0);
-	vec3 mask = vec3(1, 1, 1);
-
-	for (int depth = 0; depth < MAX_DEPTH; depth++)
-	{
-		ObjectIntersection intersection = Intersect(ray, spheres, count);
-
-		if (intersection.hit == 0) return resultColor * vec3(0.2f, 0.2f, 0.2f);
-
-		resultColor += mask * intersection.material.emission;
-		vec3 position = ray.origin + ray.direction * intersection.t;
-		ray = GetReflectedRay(ray, position, intersection.normal, mask, intersection.material, randState);
-	}
-	return resultColor;
-}
-
 __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, curandState* randState)
 {
 	vec3 resultColor = vec3(0, 0, 0);
@@ -665,7 +686,6 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount
 		ObjectIntersection intersection = Intersect(ray, spheres, meshes, sphereCount, meshCount);
 
 		if (intersection.hit == 0) return resultColor * vec3(0.2f, 0.2f, 0.2f);
-
 		resultColor += mask * intersection.material.emission;
 		vec3 position = ray.origin + ray.direction * intersection.t;
 		ray = GetReflectedRay(ray, position, intersection.normal, mask, intersection.material, randState);
@@ -673,7 +693,7 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount
 	return resultColor;
 }
 
-__global__ void PathKernel(Camera* camera, Sphere* spheres, int count, int loopX, int loopY, vec3* deviceImage)
+__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, vec3* deviceImage)
 {
 	int width = camera->width;
 	int height = camera->height;
@@ -693,7 +713,7 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, int count, int loopX
 	{
 		curand_init(threadId + WangHash(s), 0, 0, &randState);
 		Ray ray = camera->GetRay(&randState, x, y);
-		color += TraceRay(ray, spheres, count, &randState);
+		color += TraceRay(ray, spheres, meshes, sphereCount, meshCount, &randState);
 	}
 	color *= invSample;
 	deviceImage[i] = color;
@@ -723,7 +743,7 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
 }
 
-void TracingLoop(Camera* camera, Sphere* spheres, int count, vec3* deviceImage)
+void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, vec3* deviceImage)
 {
 	int progress = 0;
 	for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
@@ -734,7 +754,7 @@ void TracingLoop(Camera* camera, Sphere* spheres, int count, vec3* deviceImage)
 			float elapsedTime;
 			cudaEventCreate(&start);
 			cudaEventRecord(start, 0);
-			PathKernel<< <grid, block >> > (camera, spheres, count, i, j, deviceImage);
+			PathKernel<< <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, deviceImage);
 			cudaEventCreate(&stop);
 			cudaEventRecord(stop, 0);
 			cudaEventSynchronize(stop);
@@ -808,13 +828,31 @@ void RenderImage()
 	gpuErrorCheck(cudaMalloc(&cudaSpheres, sizeof(Sphere) * sphereCount));
 	gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres, sizeof(Sphere) * sphereCount, cudaMemcpyHostToDevice));
 
+	int meshCount = sizeof(meshes) / sizeof(Mesh);
+	Mesh* cudaMeshes;
+	std::vector<Mesh>* meshVector = new std::vector<Mesh>;
+	std::vector<Triangle*> triangleVector;
+	for (int i = 0; i < meshCount; i++)
+	{
+		Mesh currentMesh = meshes[i];
+		Mesh cudaMesh = currentMesh;
+		Triangle* cudaTriangles;
+		gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
+		gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
+		cudaMesh.triangles = cudaTriangles;
+		meshVector->push_back(cudaMesh);
+		triangleVector.push_back(cudaTriangles);
+	}
+	gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshCount));
+	gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector->data(), sizeof(Mesh) * meshCount, cudaMemcpyHostToDevice));
+
 	vec3* deviceImage;
 	cudaEvent_t start, stop;
 	float elapsedTime;
 	cudaEventCreate(&start);
 	cudaEventRecord(start, 0);
 	cudaMalloc(&deviceImage, width * height * sizeof(vec3));
-	TracingLoop(cudaCamera, cudaSpheres, sphereCount, deviceImage);
+	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, deviceImage);
 	cudaDeviceSynchronize();
 	cudaEventCreate(&stop);
 	cudaEventRecord(stop, 0);
@@ -829,6 +867,11 @@ void RenderImage()
 	cudaFree(deviceImage);
 	cudaFree(cudaCamera);
 	cudaFree(cudaSpheres);
+	for (auto & triangle : triangleVector)
+	{
+		cudaFree(triangle);
+	}
+	cudaFree(cudaMeshes);
 	delete hostImage;
 }
 
@@ -916,13 +959,32 @@ void Keyboard(unsigned char key, int x, int y)
 	{
 		RenderImage();
 	}
-
 	if (IsKeyDown('f'))
 	{
 		cudaToggle = !cudaToggle;
 		frame = 1;
 	}
-
+	if (IsKeyDown('t'))
+	{
+		camera->aperture += 0.1f;
+		cudaDirty = true;
+	}
+	if (IsKeyDown('g'))
+	{
+		camera->aperture -= 0.1f;
+		cudaDirty = true;
+	}
+	if (IsKeyDown('y'))
+	{
+		camera->focalDistance += 0.5f;
+		cudaDirty = true;
+	}
+	if (IsKeyDown('h'))
+	{
+		camera->focalDistance -= 0.5f;
+		cudaDirty = true;
+	}
+	printf("%f %f\n", camera->aperture, camera->focalDistance);
 	glutPostRedisplay();
 }
 void KeyboardUp(unsigned char key, int x, int y)
@@ -945,6 +1007,20 @@ void Mouse(int button, int state, int x, int y)
 	mousePos[0] = x;
 	mousePos[1] = y;
 	mouseState[button] = !state;
+	glutPostRedisplay();
+}
+void MouseWheel(int button, int dir, int x, int y)
+{
+	if (dir > 0)
+	{
+		camera->fov++;
+		cudaDirty = true;
+	}
+	else
+	{
+		camera->fov--;
+		cudaDirty = true;
+	}
 	glutPostRedisplay();
 }
 void Motion(int x, int y)
@@ -1154,6 +1230,7 @@ int main(int argc, char **argv)
 	glutSpecialUpFunc(SpecialUp);
 	glutReshapeFunc(Reshape);
 	glutIdleFunc(Idle);
+	glutMouseWheelFunc(MouseWheel);
 	glutMouseFunc(Mouse);
 	glutPassiveMotionFunc(Motion);
 	glutMotionFunc(Motion);
