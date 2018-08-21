@@ -26,7 +26,7 @@ struct Ray
 	vec3 direction;
 	__host__ __device__ Ray(vec3 origin, vec3 direction)
 	{
-		this->origin = origin + direction * 0.001f;
+		this->origin = origin + direction * (ENABLE_SURFACE_ACNE ? EPSILON : 1);
 		this->direction = direction;
 	}
 };
@@ -36,7 +36,7 @@ struct Camera
 	__host__ __device__ Camera()
 	{
 		proj = glm::mat4(1.0f);
-		position = glm::vec3(2, 2, 2);
+		position = glm::vec3(22.704636f, 33.204121f, -33.861454f);
 		fov = 70.0f;
 		nearPlane = 0.1f;
 		farPlane = 1000.0f;
