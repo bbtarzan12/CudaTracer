@@ -12,7 +12,7 @@
 
 using namespace glm;
 
-enum MaterialType { DIFF, GLOSS, TRANS, SPEC, EMIT };
+enum MaterialType { DIFF, GLOSS, TRANS, SPEC };
 
 int oldTimeSinceStart = 0;
 float deltaTime = 0;
@@ -44,6 +44,8 @@ struct Camera
 		mouseSpeed = 3.0f;
 		pitch = -37.0f;
 		yaw = 330.0f;
+		view = mat4(0);
+		proj = mat4(0);
 	}
 
 	__device__ Ray GetRay(curandState* randState, int x, int y)
@@ -96,7 +98,12 @@ struct Camera
 		right = normalize(cross(forward, vec3(0, 1, 0)));
 		up = normalize(cross(right, forward));
 
-		view = lookAt(position, position + forward, up);
+		mat4 viewMatrix = lookAt(position, position + forward, up);
+		if (view != viewMatrix)
+		{
+			cudaDirty = true;
+			view = viewMatrix;
+		}
 		glMultMatrixf(value_ptr(view));
 		toggleMouseMovement = IsMouseDown(0);
 	}
@@ -144,7 +151,7 @@ private:
 
 struct Material
 {
-	__host__ __device__ Material(MaterialType type = DIFF, vec3 color = vec3(0), vec3 emission = vec3(1))
+	__host__ __device__ Material(MaterialType type = DIFF, vec3 color = vec3(0), vec3 emission = vec3(0))
 	{
 		this->type = type;
 		this->color = color;
@@ -209,16 +216,19 @@ struct Sphere
 
 #pragma region Scene Variables
 
+dim3 block, grid;
 Camera* camera;
 Sphere spheres[] =
 {
-	Sphere(10000, vec3(0, 10040, 0),Material(EMIT, vec3(1), vec3(3.3f, 3.3f, 3.3f))),
-	Sphere(10000, vec3(0, -10010, 0), Material(DIFF, vec3(0.75f, 0.75f, 0.75f))),
-	Sphere(10000, vec3(10040, 0, 0),Material(DIFF, vec3(0.75f, 0.25f, 0.25f))),
-	Sphere(10000, vec3(-10040, 0, 0), Material(DIFF, vec3(0.25f, 0.25f, 0.75f))),
-	Sphere(10000, vec3(0, 0, 10040), Material(DIFF, vec3(0.75f, 0.75f, 0.75f))),
-	Sphere(10000, vec3(0, 0, -10040), Material(DIFF, vec3(0.75f, 0.75f, 0.75f))),
-	Sphere(10, vec3(0, 10, 0), Material(TRANS, vec3(0.75f, 0.75f, 0.75f)))
+	Sphere(1000, vec3(0, 1040, 0),Material(DIFF, vec3(1), vec3(2.2f, 2.2f, 2.2f))),
+	Sphere(1000, vec3(0, -1010, 0), Material(DIFF, vec3(0.75f, 0.75f, 0.75f))),
+	Sphere(1000, vec3(1040, 0, 0),Material(DIFF, vec3(0.75f, 0.25f, 0.25f))),
+	Sphere(1000, vec3(-1040, 0, 0), Material(DIFF, vec3(0.25f, 0.25f, 0.75f))),
+	Sphere(1000, vec3(0, 0, 1040), Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
+	Sphere(1000, vec3(0, 0, -1040), Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
+	Sphere(10, vec3(20, 0, 14), Material(TRANS,  vec3(1))),
+	Sphere(10, vec3(-14, 0, -20), Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
+	Sphere(10, vec3(-14, 0, 14), Material(SPEC,  vec3(0.85f, 0.85f, 0.85f)))
 };
 
 #pragma endregion Scene Variables
@@ -244,6 +254,7 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 position, glm::vec3 normal, vec3 &c
 			u = normalize(cross(vec3(1.0f, 0.0f, 0.0f), w));
 		vec3 v = cross(w, u);
 		vec3 reflected = normalize((u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrt(1 - r2)));
+		color *= material.color;
 		return Ray(position, reflected);
 	}
 	case GLOSS:
@@ -259,7 +270,7 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 position, glm::vec3 normal, vec3 &c
 		vec3 v = cross(w, u);
 
 		vec3 reflected = normalize(u * cos(phi) * sinTheta + v * sin(phi) * sinTheta + w * cosTheta);
-
+		color *= material.color;
 		return Ray(position, reflected);
 	}
 	case TRANS:
@@ -301,18 +312,18 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 position, glm::vec3 normal, vec3 &c
 		RP = Re / P;
 		TP = Tr / (1 - P);
 
-		if (curand_uniform(randState) < P)
+		if (curand_uniform(randState) < 0.25f)
 		{
-			color = color * (RP);
+			color *= (RP);
 			return Ray(position, reflection);
 		}
-
-		color = color * (TP);
+		color *= (TP);
 		return Ray(position, tdir);
 	}
 	case SPEC:
 	{
 		vec3 reflected = ray.direction - normal * 2.0f * dot(normal, ray.direction);
+		color *= material.color;
 		return Ray(position, reflected);
 	}
 	}
@@ -340,43 +351,29 @@ __device__ ObjectIntersection Intersect(Ray ray, Sphere* spheres, int count)
 
 __device__ vec3 TraceRay(Ray ray, Sphere* spheres, int count, curandState* randState)
 {
-	vec3 resultColor = vec3(1, 1, 1);
+	vec3 resultColor = vec3(0,0,0);
+	vec3 mask = vec3(1, 1, 1);
 
 	for (int depth = 0; depth < MAX_DEPTH; depth++)
 	{
 		ObjectIntersection intersection = Intersect(ray, spheres, count);
 
-		if (intersection.hit == 0) return vec3(0, 0, 0);
+		if (intersection.hit == 0) return resultColor * vec3(0.2f, 0.2f, 0.2f);
 
-		if (intersection.material.type == EMIT)
-			return resultColor * intersection.material.emission;
-
-		vec3 color = intersection.material.color;
-
-		if (depth > ROULETTE_DEPTH)
-		{
-			float maxReflection = color.x > color.y && color.x > color.z ? color.x : color.y > color.z ? color.y : color.z;
-			float random = curand_uniform(randState);
-
-			if (random >= maxReflection)
-				return resultColor;
-
-			color /= maxReflection;
-		}
+		resultColor += mask * intersection.material.emission;
 		vec3 position = ray.origin + ray.direction * intersection.t;
-		ray = GetReflectedRay(ray, position, intersection.normal, color, intersection.material, randState);
-		resultColor *= color;
+		ray = GetReflectedRay(ray, position, intersection.normal, mask, intersection.material, randState);
 	}
 	return resultColor;
 }
 
 
-__global__ void PathKernel(Camera* camera, Sphere* spheres, int count, vec3* deviceImage)
+__global__ void PathKernel(Camera* camera, Sphere* spheres, int count, int loopX, int loopY, vec3* deviceImage)
 {
 	int width = camera->width;
 	int height = camera->height;
-	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	int y = blockIdx.y * blockDim.y + threadIdx.y;
+	int x = gridDim.x * blockDim.x * loopX + blockIdx.x * blockDim.x + threadIdx.x;
+	int y = gridDim.y * blockDim.y * loopY + blockIdx.y * blockDim.y + threadIdx.y;
 	int threadId = (blockIdx.x + blockIdx.y * gridDim.x) * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x) + threadIdx.x;
 
 	int i = y * width + x;
@@ -395,6 +392,76 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, int count, vec3* dev
 	}
 	color *= invSample;
 	deviceImage[i] = color;
+}
+
+__global__ void PathKernel(Camera* camera, Sphere* spheres, int count, int loopX, int loopY, int frame, cudaSurfaceObject_t surface)
+{
+	int width = camera->width;
+	int height = camera->height;
+	int x = gridDim.x * blockDim.x * loopX + blockIdx.x * blockDim.x + threadIdx.x;
+	int y = gridDim.y * blockDim.y * loopY + blockIdx.y * blockDim.y + threadIdx.y;
+	int threadId = (blockIdx.x + blockIdx.y * gridDim.x) * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x) + threadIdx.x;
+
+	int i = y * width + x;
+
+	if (i >= width * height) return;
+
+	curandState randState;
+	float4 originColor;
+	surf2Dread(&originColor, surface, x * sizeof(float4), y);
+
+	vec3 resultColor = vec3(0, 0, 0);
+	curand_init(threadId + WangHash(frame), 0, 0, &randState);
+	Ray ray = camera->GetRay(&randState, x, y);
+	vec3 color = TraceRay(ray, spheres, count, &randState);
+	resultColor = (vec3(originColor.x, originColor.y, originColor.z) * (float)(frame - 1) + color) / (float)frame;
+	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
+}
+
+void TracingLoop(Camera* camera, Sphere* spheres, int count, vec3* deviceImage)
+{
+	int progress = 0;
+	for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
+	{
+		for (int j = 0; j < TRACE_OUTER_LOOP_Y; j++)
+		{
+			cudaEvent_t start, stop;
+			float elapsedTime;
+			cudaEventCreate(&start);
+			cudaEventRecord(start, 0);
+			PathKernel<< <grid, block >> > (camera, spheres, count, i, j, deviceImage);
+			cudaEventCreate(&stop);
+			cudaEventRecord(stop, 0);
+			cudaEventSynchronize(stop);
+
+			cudaEventElapsedTime(&elapsedTime, start, stop);
+			printf("\rTracing %d/%d  |  Elapsed time : %f ms", ++progress, TRACE_OUTER_LOOP_X * TRACE_OUTER_LOOP_Y, elapsedTime);
+			cudaDeviceSynchronize();
+		}
+	}
+}
+
+void TracingLoop(Camera* camera, Sphere* spheres, int count, int frame, cudaSurfaceObject_t surface)
+{
+	int progress = 0;
+	for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
+	{
+		for (int j = 0; j < TRACE_OUTER_LOOP_Y; j++)
+		{
+			cudaEvent_t start, stop;
+			float elapsedTime;
+			cudaEventCreate(&start);
+			cudaEventRecord(start, 0);
+			PathKernel << <grid, block >> > (camera, spheres, count, i, j, frame, surface);
+			cudaEventCreate(&stop);
+			cudaEventRecord(stop, 0);
+			cudaEventSynchronize(stop);
+
+			cudaEventElapsedTime(&elapsedTime, start, stop);
+			printf("\rTracing %d/%d  |  Elapsed time : %f ms", ++progress, TRACE_OUTER_LOOP_X * TRACE_OUTER_LOOP_Y, elapsedTime);
+			cudaDeviceSynchronize();
+		}
+	}
 }
 
 void SaveImage(const char* path, int width, int height, const vec3* colors)
@@ -418,15 +485,14 @@ void SaveImage(const char* path, int width, int height, const vec3* colors)
 	if (!success) std::cout << "Image Save Error " << std::endl;
 }
 
-void Render()
+void RenderImage()
 {
 	int width = camera->width;
 	int height = camera->height;
 
-	dim3 block, grid;
 	block = dim3(16, 9);
-	grid.x = ceil(ceil(width) / block.x);
-	grid.y = ceil(ceil(height) / block.y);
+	grid.x = ceil(ceil(width / TRACE_OUTER_LOOP_X) / block.x);
+	grid.y = ceil(ceil(height / TRACE_OUTER_LOOP_Y) / block.y);
 
 	Camera* cudaCamera;
 	gpuErrorCheck(cudaMalloc(&cudaCamera, sizeof(Camera)));
@@ -443,7 +509,7 @@ void Render()
 	cudaEventCreate(&start);
 	cudaEventRecord(start, 0);
 	cudaMalloc(&deviceImage, width * height * sizeof(vec3));
-	PathKernel << <grid, block >> > (cudaCamera, cudaSpheres, sphereCount, deviceImage);
+	TracingLoop(cudaCamera, cudaSpheres, sphereCount, deviceImage);
 	cudaDeviceSynchronize();
 	cudaEventCreate(&stop);
 	cudaEventRecord(stop, 0);
@@ -455,6 +521,57 @@ void Render()
 	cudaMemcpy(hostImage, deviceImage, width * height * sizeof(vec3), cudaMemcpyDeviceToHost);
 
 	SaveImage("Result.png", width, height, hostImage);
+	cudaFree(deviceImage);
+	cudaFree(cudaCamera);
+	cudaFree(cudaSpheres);
+	delete hostImage;
+}
+
+void RenderRealTime(cudaSurfaceObject_t surface, int frame)
+{
+	int width = camera->width;
+	int height = camera->height;
+
+	block = dim3(16, 9);
+	grid.x = ceil(ceil(width / TRACE_OUTER_LOOP_X) / block.x);
+	grid.y = ceil(ceil(height / TRACE_OUTER_LOOP_Y) / block.y);
+
+	cudaEvent_t start, stop;
+	float memoryAllocTime, renderingTime;
+	cudaEventCreate(&start);
+	cudaEventRecord(start, 0);
+
+	Camera* cudaCamera;
+	gpuErrorCheck(cudaMalloc(&cudaCamera, sizeof(Camera)));
+	gpuErrorCheck(cudaMemcpy(cudaCamera, camera, sizeof(Camera), cudaMemcpyHostToDevice));
+
+	int sphereCount = sizeof(spheres) / sizeof(Sphere);
+	Sphere* cudaSpheres;
+	gpuErrorCheck(cudaMalloc(&cudaSpheres, sizeof(Sphere) * sphereCount));
+	gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres, sizeof(Sphere) * sphereCount, cudaMemcpyHostToDevice));
+
+	cudaDeviceSynchronize();
+	cudaEventCreate(&stop);
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&memoryAllocTime, start, stop);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
+
+	cudaEventCreate(&start);
+	cudaEventRecord(start, 0);
+	TracingLoop(cudaCamera, cudaSpheres, sphereCount, frame, surface);
+	cudaDeviceSynchronize();
+	cudaEventCreate(&stop);
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&renderingTime, start, stop);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
+	printf("\rRendering End(%d) | Memory Allocation Time : %f ms | Rendering time : %f ms\n", frame, memoryAllocTime, renderingTime);
+
+	cudaFree(cudaCamera);
+	cudaFree(cudaSpheres);
 }
 
 #pragma endregion Kernels
@@ -469,7 +586,13 @@ void Keyboard(unsigned char key, int x, int y)
 
 	if (IsKeyDown('q'))
 	{
-		Render();
+		RenderImage();
+	}
+
+	if (IsKeyDown('f'))
+	{
+		cudaToggle = !cudaToggle;
+		frame = 1;
 	}
 
 	glutPostRedisplay();
@@ -518,43 +641,94 @@ void Display(void)
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	camera->UpdateCamera(deltaTime);
-
-	int size = sizeof(spheres) / sizeof(Sphere);
-	for (int n = 0; n < size; n++)
+	if (cudaToggle)
 	{
-		glPushMatrix();
-		glTranslatef(spheres[n].position.x, spheres[n].position.y, spheres[n].position.z);
-		glColor3fv(value_ptr(spheres[n].material.color));
-		int i, j;
-		int lats = 50;
-		int longs = 50;
-		float radius = spheres[n].radius;
-		for (i = 0; i <= lats; i++)
+		int width = camera->width;
+		int height = camera->height;
+		glColor3f(1, 1, 1);
+		glDisable(GL_LIGHTING);
+		cudaResourceDesc viewCudaArrayResourceDesc;
 		{
-			float lat0 = pi<float>() * (-float(0.5) + (float)(i - 1) / lats);
-			float z0 = radius * sin(lat0);
-			float zr0 = radius * cos(lat0);
+			viewCudaArrayResourceDesc.resType = cudaResourceTypeArray;
+			viewCudaArrayResourceDesc.res.array.array = viewArray;
+		}
 
-			float lat1 = pi<float>() * (-float(0.5) + (float)i / lats);
-			float z1 = radius * sin(lat1);
-			float zr1 = radius * cos(lat1);
-
-			glBegin(GL_QUAD_STRIP);
-			for (j = 0; j <= longs; j++)
+		cudaSurfaceObject_t viewCudaSurfaceObject;
+		cudaCreateSurfaceObject(&viewCudaSurfaceObject, &viewCudaArrayResourceDesc);
+		{
+			if (cudaDirty)
 			{
-				float lng = 2 * pi<float>() * (float)(j - 1) / longs;
-				float x = cos(lng);
-				float y = sin(lng);
-				glNormal3f(x * zr1, y * zr1, z1);
-				glVertex3f(x * zr1, y * zr1, z1);
-				glNormal3f(x * zr0, y * zr0, z0);
-				glVertex3f(x * zr0, y * zr0, z0);
+				frame = 1;
+				cudaDirty = false;
+			}
+			RenderRealTime(viewCudaSurfaceObject, frame++);
+		}
+		cudaDestroySurfaceObject(viewCudaSurfaceObject);
+
+		cudaGraphicsUnmapResources(1, &viewResource);
+
+		cudaStreamSynchronize(0);
+
+		glLoadIdentity();
+		glViewport(0, 0, width, height);
+		glMatrixMode(GL_PROJECTION);
+		glLoadIdentity();
+		glOrtho(0, width, 0, height, -1000, 1000);
+
+		glBindTexture(GL_TEXTURE_2D, viewGLTexture);
+		{
+			glBegin(GL_QUADS);
+			{
+				glTexCoord2f(0, 1);	glVertex2f(0, 0);
+				glTexCoord2f(1, 1);	glVertex2f(width, 0);
+				glTexCoord2f(1, 0);	glVertex2f(width, height);
+				glTexCoord2f(0, 0);	glVertex2f(0, height);
+
 			}
 			glEnd();
 		}
-		glPopMatrix();
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glFinish();
+		glEnable(GL_LIGHTING);
 	}
+	else
+	{
+		int size = sizeof(spheres) / sizeof(Sphere);
+		for (int n = 0; n < size; n++)
+		{
+			glPushMatrix();
+			glTranslatef(spheres[n].position.x, spheres[n].position.y, spheres[n].position.z);
+			glColor3fv(value_ptr(spheres[n].material.color));
+			int i, j;
+			int lats = 50;
+			int longs = 50;
+			float radius = spheres[n].radius;
+			for (i = 0; i <= lats; i++)
+			{
+				float lat0 = pi<float>() * (-float(0.5) + (float)(i - 1) / lats);
+				float z0 = radius * sin(lat0);
+				float zr0 = radius * cos(lat0);
 
+				float lat1 = pi<float>() * (-float(0.5) + (float)i / lats);
+				float z1 = radius * sin(lat1);
+				float zr1 = radius * cos(lat1);
+
+				glBegin(GL_QUAD_STRIP);
+				for (j = 0; j <= longs; j++)
+				{
+					float lng = 2 * pi<float>() * (float)(j - 1) / longs;
+					float x = cos(lng);
+					float y = sin(lng);
+					glNormal3f(x * zr1, y * zr1, z1);
+					glVertex3f(x * zr1, y * zr1, z1);
+					glNormal3f(x * zr0, y * zr0, z0);
+					glVertex3f(x * zr0, y * zr0, z0);
+				}
+				glEnd();
+			}
+			glPopMatrix();
+		}
+	}
 	glutSwapBuffers();
 }
 
@@ -602,7 +776,26 @@ int main(int argc, char **argv)
 
 	glClearColor(0.6, 0.65, 0.85, 0);
 
+	// Init
 	camera = new Camera;
+	glEnable(GL_TEXTURE_2D);
+	glGenTextures(1, &viewGLTexture);
+
+	glBindTexture(GL_TEXTURE_2D, viewGLTexture);
+	{
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, WIDTH, HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
+	}
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+	cudaGraphicsGLRegisterImage(&viewResource, viewGLTexture, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsWriteDiscard);
+
+	cudaGraphicsMapResources(1, &viewResource);
+	cudaGraphicsSubResourceGetMappedArray(&viewArray, viewResource, 0, 0);
+
 
 	glutKeyboardFunc(Keyboard);
 	glutKeyboardUpFunc(KeyboardUp);
@@ -615,5 +808,6 @@ int main(int argc, char **argv)
 	glutMotionFunc(Motion);
 	glutDisplayFunc(Display);
 	glutMainLoop();
+	cudaDeviceReset();
 	return 0;
 }

@@ -12,13 +12,23 @@
 
 #define gpuErrorCheck(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 
-constexpr auto WIDTH = 1280;
-constexpr auto HEIGHT = 720;
-constexpr auto TRACE_SAMPLES = 50;
-constexpr auto EPSILON = 1e-10;
+constexpr int WIDTH = 1280;
+constexpr int HEIGHT = 720;
+constexpr int TRACE_SAMPLES = 1024;
+constexpr auto TRACE_OUTER_LOOP_X = 1;
+constexpr auto TRACE_OUTER_LOOP_Y = 1;
+constexpr float EPSILON = 1e-10;
 constexpr auto INF = 3.402823466e+38F;
-constexpr auto MAX_DEPTH = 1000;
-constexpr auto ROULETTE_DEPTH = 5;
+constexpr int MAX_DEPTH = 7;
+constexpr int ROULETTE_DEPTH = 4;
+
+// RealTime
+GLuint viewGLTexture;
+cudaGraphicsResource* viewResource;
+cudaArray* viewArray;
+bool cudaToggle = true;
+bool cudaDirty = false;
+int frame = 1;
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
 {
@@ -38,24 +48,5 @@ __device__ unsigned int WangHash(unsigned int a)
 	a = a ^ (a >> 15);
 	return a;
 }
-
-__device__ static float GetRandom(unsigned int *seed0, unsigned int *seed1)
-{
-	*seed0 = 36969 * ((*seed0) & 65535) + ((*seed0) >> 16);  // hash the seeds using bitwise AND and bitshifts
-	*seed1 = 18000 * ((*seed1) & 65535) + ((*seed1) >> 16);
-
-	unsigned int ires = ((*seed0) << 16) + (*seed1);
-
-	// Convert to float
-	union {
-		float f;
-		unsigned int ui;
-	} res;
-
-	res.ui = (ires & 0x007fffff) | 0x40000000;  // bitwise AND, bitwise OR
-
-	return (res.f - 2.f) / 2.f;
-}
-
 
 #endif
