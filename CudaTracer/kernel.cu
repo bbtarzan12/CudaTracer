@@ -249,7 +249,7 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 position, glm::vec3 normal, vec3 &c
 
 		vec3 w = nl;
 		vec3 u;
-		if (fabs(w.x) > 0.1)
+		if (fabs(w.x) > 0.1f)
 			u = normalize(cross(vec3(0.0f, 1.0f, 0.0f), w));
 		else
 			u = normalize(cross(vec3(1.0f, 0.0f, 0.0f), w));
@@ -364,7 +364,6 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, int count, curandState* randS
 		resultColor += mask * intersection.material.emission;
 		vec3 position = ray.origin + ray.direction * intersection.t;
 		ray = GetReflectedRay(ray, position, intersection.normal, mask, intersection.material, randState);
-		ray.origin += ray.direction * EPSILON;
 	}
 	return resultColor;
 }
