@@ -26,7 +26,7 @@ struct Ray
 	vec3 direction;
 	__host__ __device__ Ray(vec3 origin, vec3 direction)
 	{
-		this->origin = origin;
+		this->origin = origin + direction * 0.001f;
 		this->direction = direction;
 	}
 };
@@ -197,7 +197,7 @@ struct Sphere
 		float b = dot(op, ray.direction);
 		float det = b * b - dot(op, op) + radius * radius;
 
-		if (det < 0)
+		if (det < EPSILON)
 			return ObjectIntersection(hit, t, normal, material);
 		else
 			det = glm::sqrt(det);
@@ -228,7 +228,8 @@ Sphere spheres[] =
 	Sphere(1000, vec3(0, 0, -1040), Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
 	Sphere(10, vec3(20, 0, 14), Material(TRANS,  vec3(1))),
 	Sphere(10, vec3(-14, 0, -20), Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
-	Sphere(10, vec3(-14, 0, 14), Material(SPEC,  vec3(0.85f, 0.85f, 0.85f)))
+	Sphere(10, vec3(-14, 0, 14), Material(SPEC,  vec3(1))),
+	Sphere(10, vec3(14, 0, -14), Material(GLOSS,  vec3(1)))
 };
 
 #pragma endregion Scene Variables
@@ -241,7 +242,7 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 position, glm::vec3 normal, vec3 &c
 	{
 	case DIFF:
 	{
-		vec3 nl = dot(normal, ray.direction) < 0.0f ? normal : normal * -1.0f;
+		vec3 nl = dot(normal, ray.direction) < EPSILON ? normal : normal * -1.0f;
 		float r1 = 2.0f * pi<float>() * curand_uniform(randState);
 		float r2 = curand_uniform(randState);
 		float r2s = sqrt(r2);
@@ -275,9 +276,9 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 position, glm::vec3 normal, vec3 &c
 	}
 	case TRANS:
 	{
-		vec3 nl = dot(normal, ray.direction) < 0 ? normal : normal * -1.0f;
+		vec3 nl = dot(normal, ray.direction) < EPSILON ? normal : normal * -1.0f;
 		vec3 reflection = ray.direction - normal * 2.0f * dot(normal, ray.direction);
-		bool into = dot(normal, nl) > 0;
+		bool into = dot(normal, nl) > EPSILON;
 		float nc = 1.0f;
 		float nt = 1.5f;
 		float nnt = into ? nc / nt : nt / nc;
@@ -288,7 +289,7 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 position, glm::vec3 normal, vec3 &c
 		float ddn = dot(ray.direction, nl);
 		float cos2t = 1.0f - nnt * nnt * (1.0f - ddn * ddn);
 
-		if (cos2t < 0) return Ray(position, reflection);
+		if (cos2t < EPSILON) return Ray(position, reflection);
 
 		if (into)
 			tdir = normalize((ray.direction * nnt - normal * (ddn * nnt + sqrt(cos2t))));
@@ -312,7 +313,7 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 position, glm::vec3 normal, vec3 &c
 		RP = Re / P;
 		TP = Tr / (1 - P);
 
-		if (curand_uniform(randState) < 0.25f)
+		if (curand_uniform(randState) < P)
 		{
 			color *= (RP);
 			return Ray(position, reflection);
@@ -363,6 +364,7 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, int count, curandState* randS
 		resultColor += mask * intersection.material.emission;
 		vec3 position = ray.origin + ray.direction * intersection.t;
 		ray = GetReflectedRay(ray, position, intersection.normal, mask, intersection.material, randState);
+		ray.origin += ray.direction * EPSILON;
 	}
 	return resultColor;
 }
