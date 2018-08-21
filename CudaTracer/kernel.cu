@@ -7,6 +7,7 @@
 
 #include <freeimage.h>
 
+#include "tiny_obj_loader.h"
 #include "kernel.cuh"
 #include "Input.h"
 
@@ -36,12 +37,12 @@ struct Camera
 	__host__ __device__ Camera()
 	{
 		proj = glm::mat4(1.0f);
-		position = glm::vec3(22.704636f, 33.204121f, -33.861454f);
+		position = glm::vec3(13.704636f, 25.204121f, -25.861454f);
 		fov = 70.0f;
 		nearPlane = 0.1f;
 		farPlane = 1000.0f;
 		moveSpeed = 50.0f;
-		mouseSpeed = 3.0f;
+		mouseSpeed = 10.0f;
 		pitch = -37.0f;
 		yaw = 330.0f;
 		view = mat4(0);
@@ -177,12 +178,73 @@ struct ObjectIntersection
 	Material material;
 };
 
+struct Triangle
+{
+	__host__ __device__ Triangle() {}
+	__host__ __device__ Triangle(vec3 pos0, vec3 pos1, vec3 pos2, Material material)
+	{
+		pos[0] = pos0;
+		pos[1] = pos1;
+		pos[2] = pos2;
+		hasTexture = false;
+		this->material = material;
+	}
+
+	__host__ __device__ Triangle(vec3 pos0, vec3 pos1, vec3 pos2, vec3 tex0, vec3 tex1, vec3 tex2, Material material)
+	{
+		pos[0] = pos0;
+		pos[1] = pos1;
+		pos[2] = pos2;
+		tex[0] = tex0;
+		tex[1] = tex1;
+		tex[2] = tex2;
+		hasTexture = true;
+		this->material = material;
+	}
+
+	__device__ ObjectIntersection Intersect(const Ray &ray, vec3 position) const
+	{
+		bool hit = false;
+		float u, v, t = 0;
+
+		vec3 pos[3] = { this->pos[0] + position, this->pos[1] + position, this->pos[2] + position };
+
+		vec3 normal = normalize(cross(pos[1] - pos[0], pos[2] - pos[0]));
+
+		vec3 v0v1 = pos[1] - pos[0];
+		vec3 v0v2 = pos[2] - pos[0];
+		vec3 pvec = cross(ray.direction, v0v2);
+		float det = dot(v0v1, pvec);
+		if (fabs(det) < epsilon<float>()) return ObjectIntersection(hit, t, normal, material);
+
+		vec3 tvec = ray.origin - pos[0];
+		u = dot(tvec, pvec);
+		if (u < 0 || u > det) return ObjectIntersection(hit, t, normal, material);
+
+		vec3 qvec = cross(tvec, v0v1);
+		v = dot(ray.direction, qvec);
+		if (v < 0 || u + v > det) return ObjectIntersection(hit, t, normal, material);
+
+		t = dot(v0v2, qvec) / det;
+
+		if (t < epsilon<float>()) return ObjectIntersection(hit, t, normal, material);
+
+		hit = true;
+		return ObjectIntersection(hit, t, normal, material);
+	}
+
+	vec3 pos[3];
+	vec3 tex[3];
+	Material material;
+	bool hasTexture;
+};
+
 struct Sphere
 {
-	__host__ __device__ Sphere(float radius = 0, vec3 position = vec3(0), Material material = Material())
+	__host__ __device__ Sphere(vec3 position = vec3(0), float radius = 0, Material material = Material())
 	{
-		this->radius = radius;
 		this->position = position;
+		this->radius = radius;
 		this->material = material;
 	}
 	float radius;
@@ -212,7 +274,191 @@ struct Sphere
 	}
 };
 
+struct Mesh
+{
+	__host__ __device__ Mesh() {}
+	__host__  Mesh(vec3 position, const char* fileName = "", Material material = Material())
+	{
+		this->position = position;
+
+		std::string mtlBasePath;
+		std::string inputFile = fileName;
+		unsigned long pos = inputFile.find_last_of("/");
+		mtlBasePath = inputFile.substr(0, pos + 1);
+
+		std::vector<tinyobj::shape_t> obj_shapes;
+		std::vector<tinyobj::material_t> obj_materials;
+		std::vector<Material> materials;
+
+		printf("Loading %s...\n", fileName);
+		std::string err = tinyobj::LoadObj(obj_shapes, obj_materials, inputFile.c_str(), mtlBasePath.c_str());
+
+		if (!err.empty())
+			std::cerr << err << std::endl;
+
+		for (auto & obj_material : obj_materials)
+		{
+			std::string texturePath = "";
+
+			vec3 diffuseColor = vec3(obj_material.diffuse[0], obj_material.diffuse[1], obj_material.diffuse[2]);
+			vec3 emissionColor = vec3(obj_material.emission[0], obj_material.emission[1], obj_material.emission[2]);
+
+			if (!obj_material.diffuse_texname.empty())
+			{
+				if (obj_material.diffuse_texname[0] == '/') texturePath = obj_material.diffuse_texname;
+				texturePath = mtlBasePath + obj_material.diffuse_texname;
+				materials.push_back(Material(material.type, diffuseColor, emissionColor));
+			}
+			else
+			{
+				materials.push_back(Material(material.type, diffuseColor, emissionColor));
+			}
+		}
+
+		long shapeSize, indicesSize;
+		shapeSize = obj_shapes.size();
+		std::vector<Triangle>* triangles = new std::vector<Triangle>;
+
+		for (int i = 0; i < shapeSize; i++)
+		{
+			indicesSize = obj_shapes[i].mesh.indices.size() / 3;
+			for (size_t f = 0; f < indicesSize; f++)
+			{
+
+				vec3 v0_ = vec3(
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3 + 1],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3 + 2]
+				);
+
+				vec3 v1_ = vec3(
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3 + 1],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3 + 2]
+				);
+
+				vec3 v2_ = vec3(
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3 + 1],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3 + 2]
+				);
+
+				vec3 t0_, t1_, t2_;
+
+				if (obj_shapes[i].mesh.indices[3 * f + 2] * 2 + 1 < obj_shapes[i].mesh.texcoords.size())
+				{
+					t0_ = vec3(
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f] * 2],
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f] * 2 + 1],
+						0
+					);
+
+					t1_ = vec3(
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 1] * 2],
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 1] * 2 + 1],
+						0
+					);
+
+					t2_ = vec3(
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 2] * 2],
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 2] * 2 + 1],
+						0
+					);
+				}
+				else
+				{
+					t0_ = vec3(0, 0, 0);
+					t1_ = vec3(0, 0, 0);
+					t2_ = vec3(0, 0, 0);
+				}
+
+				Triangle triangle;
+				if (obj_shapes[i].mesh.material_ids[f] < materials.size())
+				{
+					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, materials[obj_shapes[i].mesh.material_ids[f]]);
+				}
+				else
+				{
+					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, Material());
+				}
+				triangles->push_back(triangle);
+			}
+		}
+		this->count = triangles->size();
+		this->triangles = triangles->data();
+	}
+	__host__  Mesh(vec3 position, Triangle* triangles = nullptr, int count = 0, Material material = Material())
+	{
+		this->position = position;
+		this->triangles = new Triangle[count];
+		this->count = count;
+		for (int i = 0; i < count; i++)
+		{
+			this->triangles[i] = triangles[i];
+			this->triangles[i].material = material;
+		}
+	}
+	vec3 position;
+	Triangle* triangles;
+	int count;
+
+	__device__ ObjectIntersection Intersect(Ray ray)
+	{
+		float tNear = INFINITY;
+		ObjectIntersection intersection = ObjectIntersection();
+		for (int i = 0; i < count; i++)
+		{
+			ObjectIntersection temp = triangles[i].Intersect(ray, position);
+			if (temp.hit && temp.t < tNear)
+			{
+				tNear = temp.t;
+				intersection = temp;
+			}
+		}
+		return intersection;
+	}
+
+
+};
+
 #pragma endregion Structs
+
+Mesh CreateBox(vec3 pos, vec3 halfExtents, Material material)
+{
+	float halfWidth = halfExtents[0];
+	float halfHeight = halfExtents[1];
+	float halfDepth = halfExtents[2];
+
+	vec3 vertices[8] =
+	{
+		vec3(halfWidth, halfHeight, halfDepth),
+		vec3(-halfWidth, halfHeight, halfDepth),
+		vec3(halfWidth, -halfHeight, halfDepth),
+		vec3(-halfWidth, -halfHeight, halfDepth),
+		vec3(halfWidth, halfHeight, -halfDepth),
+		vec3(-halfWidth, halfHeight, -halfDepth),
+		vec3(halfWidth, -halfHeight, -halfDepth),
+		vec3(-halfWidth, -halfHeight, -halfDepth)
+	};
+
+	static int indices[36] =
+	{
+		0, 1, 2, 3, 2, 1, 4, 0, 6,
+		6, 0, 2, 5, 1, 4, 4, 1, 0,
+		7, 3, 1, 7, 1, 5, 5, 4, 7,
+		7, 4, 6, 7, 2, 3, 7, 6, 2
+	};
+
+	std::vector<Triangle> triangles;
+
+	for (int i = 0; i < 36; i += 3)
+	{
+		triangles.push_back(Triangle(vertices[indices[i]], vertices[indices[i + 1]], vertices[indices[i + 2]], material));
+	}
+
+	return Mesh(pos, triangles.data(), 12, material);
+}
+
 
 #pragma region Scene Variables
 
@@ -220,16 +466,21 @@ dim3 block, grid;
 Camera* camera;
 Sphere spheres[] =
 {
-	Sphere(1000, vec3(0, 1040, 0),Material(DIFF, vec3(1), vec3(2.2f, 2.2f, 2.2f))),
-	Sphere(1000, vec3(0, -1010, 0), Material(DIFF, vec3(0.75f, 0.75f, 0.75f))),
-	Sphere(1000, vec3(1040, 0, 0),Material(DIFF, vec3(0.75f, 0.25f, 0.25f))),
-	Sphere(1000, vec3(-1040, 0, 0), Material(DIFF, vec3(0.25f, 0.25f, 0.75f))),
-	Sphere(1000, vec3(0, 0, 1040), Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
-	Sphere(1000, vec3(0, 0, -1040), Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
-	Sphere(10, vec3(20, 0, 14), Material(TRANS,  vec3(1))),
-	Sphere(10, vec3(-14, 0, -20), Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
-	Sphere(10, vec3(-14, 0, 14), Material(SPEC,  vec3(1))),
-	Sphere(10, vec3(14, 0, -14), Material(GLOSS,  vec3(1)))
+	Sphere(vec3(20, 6, 14), 6, Material(TRANS,  vec3(1))),
+	Sphere(vec3(-14, 6, -20), 6, Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
+	Sphere(vec3(-14, 6, 14), 6, Material(SPEC,  vec3(1))),
+	Sphere(vec3(14, 6, -14), 6, Material(GLOSS,  vec3(1)))
+};
+Mesh meshes[] =
+{
+	CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
+	Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF)),
+	Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
+	//CreateBox(vec3(0, 0, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75))),
+	CreateBox(vec3(30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.0, 0.0, 0.75))),
+	CreateBox(vec3(-30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.75, 0.0, 0.0))),
+	CreateBox(vec3(0, 15, 30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75))),
+	CreateBox(vec3(0, 15, -30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75)))
 };
 
 #pragma endregion Scene Variables
@@ -350,6 +601,40 @@ __device__ ObjectIntersection Intersect(Ray ray, Sphere* spheres, int count)
 	return intersection;
 }
 
+__device__ ObjectIntersection Intersect(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount)
+{
+	ObjectIntersection intersection = ObjectIntersection();
+	ObjectIntersection temp = ObjectIntersection();
+
+	for (int i = 0; i < sphereCount; i++)
+	{
+		temp = spheres[i].Intersect(ray);
+
+		if (temp.hit)
+		{
+			if (intersection.t == 0 || temp.t < intersection.t)
+			{
+				intersection = temp;
+			}
+		}
+	}
+
+	for (int i = 0; i < meshCount; i++)
+	{
+		temp = meshes[i].Intersect(ray);
+
+		if (temp.hit)
+		{
+			if (intersection.t == 0 || temp.t < intersection.t)
+			{
+				intersection = temp;
+			}
+		}
+	}
+
+	return intersection;
+}
+
 __device__ vec3 TraceRay(Ray ray, Sphere* spheres, int count, curandState* randState)
 {
 	vec3 resultColor = vec3(0,0,0);
@@ -368,6 +653,23 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, int count, curandState* randS
 	return resultColor;
 }
 
+__device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, curandState* randState)
+{
+	vec3 resultColor = vec3(0, 0, 0);
+	vec3 mask = vec3(1, 1, 1);
+
+	for (int depth = 0; depth < MAX_DEPTH; depth++)
+	{
+		ObjectIntersection intersection = Intersect(ray, spheres, meshes, sphereCount, meshCount);
+
+		if (intersection.hit == 0) return resultColor * vec3(0.2f, 0.2f, 0.2f);
+
+		resultColor += mask * intersection.material.emission;
+		vec3 position = ray.origin + ray.direction * intersection.t;
+		ray = GetReflectedRay(ray, position, intersection.normal, mask, intersection.material, randState);
+	}
+	return resultColor;
+}
 
 __global__ void PathKernel(Camera* camera, Sphere* spheres, int count, int loopX, int loopY, vec3* deviceImage)
 {
@@ -395,7 +697,7 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, int count, int loopX
 	deviceImage[i] = color;
 }
 
-__global__ void PathKernel(Camera* camera, Sphere* spheres, int count, int loopX, int loopY, int frame, cudaSurfaceObject_t surface)
+__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, int frame, cudaSurfaceObject_t surface)
 {
 	int width = camera->width;
 	int height = camera->height;
@@ -414,7 +716,7 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, int count, int loopX
 	vec3 resultColor = vec3(0, 0, 0);
 	curand_init(threadId + WangHash(frame), 0, 0, &randState);
 	Ray ray = camera->GetRay(&randState, x, y);
-	vec3 color = TraceRay(ray, spheres, count, &randState);
+	vec3 color = TraceRay(ray, spheres, meshes, sphereCount, meshCount, &randState);
 	resultColor = (vec3(originColor.x, originColor.y, originColor.z) * (float)(frame - 1) + color) / (float)frame;
 	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
 }
@@ -442,7 +744,7 @@ void TracingLoop(Camera* camera, Sphere* spheres, int count, vec3* deviceImage)
 	}
 }
 
-void TracingLoop(Camera* camera, Sphere* spheres, int count, int frame, cudaSurfaceObject_t surface)
+void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, cudaSurfaceObject_t surface)
 {
 	int progress = 0;
 	for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
@@ -453,7 +755,7 @@ void TracingLoop(Camera* camera, Sphere* spheres, int count, int frame, cudaSurf
 			float elapsedTime;
 			cudaEventCreate(&start);
 			cudaEventRecord(start, 0);
-			PathKernel << <grid, block >> > (camera, spheres, count, i, j, frame, surface);
+			PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, frame, surface);
 			cudaEventCreate(&stop);
 			cudaEventRecord(stop, 0);
 			cudaEventSynchronize(stop);
@@ -551,6 +853,24 @@ void RenderRealTime(cudaSurfaceObject_t surface, int frame)
 	gpuErrorCheck(cudaMalloc(&cudaSpheres, sizeof(Sphere) * sphereCount));
 	gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres, sizeof(Sphere) * sphereCount, cudaMemcpyHostToDevice));
 
+	int meshCount = sizeof(meshes) / sizeof(Mesh);
+	Mesh* cudaMeshes;
+	std::vector<Mesh>* meshVector = new std::vector<Mesh>;
+	std::vector<Triangle*> triangleVector;
+	for (int i = 0; i < meshCount; i++)
+	{
+		Mesh currentMesh = meshes[i];
+		Mesh cudaMesh = currentMesh;
+		Triangle* cudaTriangles;
+		gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
+		gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
+		cudaMesh.triangles = cudaTriangles;
+		meshVector->push_back(cudaMesh);
+		triangleVector.push_back(cudaTriangles);
+	}
+	gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshCount));
+	gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector->data(), sizeof(Mesh) * meshCount, cudaMemcpyHostToDevice));
+
 	cudaDeviceSynchronize();
 	cudaEventCreate(&stop);
 	cudaEventRecord(stop, 0);
@@ -561,7 +881,7 @@ void RenderRealTime(cudaSurfaceObject_t surface, int frame)
 
 	cudaEventCreate(&start);
 	cudaEventRecord(start, 0);
-	TracingLoop(cudaCamera, cudaSpheres, sphereCount, frame, surface);
+	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, frame, surface);
 	cudaDeviceSynchronize();
 	cudaEventCreate(&stop);
 	cudaEventRecord(stop, 0);
@@ -573,6 +893,11 @@ void RenderRealTime(cudaSurfaceObject_t surface, int frame)
 
 	cudaFree(cudaCamera);
 	cudaFree(cudaSpheres);
+	for (auto & triangle : triangleVector)
+	{
+		cudaFree(triangle);
+	}
+	cudaFree(cudaMeshes);
 }
 
 #pragma endregion Kernels
@@ -729,12 +1054,36 @@ void Display(void)
 			}
 			glPopMatrix();
 		}
+		size = sizeof(meshes) / sizeof(Mesh);
+		for (int n = 0; n < size; n++)
+		{
+			glPushMatrix();
+			glTranslatef(meshes[n].position.x, meshes[n].position.y, meshes[n].position.z);
+			Triangle* triangles = meshes[n].triangles;
+			for (int i = 0; i < meshes[n].count; i++)
+			{
+				glColor3fv(value_ptr(triangles[i].material.color));
+				vec3 p0 = triangles[i].pos[0];
+				vec3 p1 = triangles[i].pos[1];
+				vec3 p2 = triangles[i].pos[2];
+
+				vec3 normal = cross((p2 - p0), (p1 - p0));
+				normal = normalize(normal);
+				glBegin(GL_TRIANGLE_STRIP);
+				glNormal3fv(value_ptr(normal));
+
+				glVertex3fv(value_ptr(p0));
+				glVertex3fv(value_ptr(p1));
+				glVertex3fv(value_ptr(p2));
+				glEnd();
+			}
+			glPopMatrix();
+		}
 	}
 	glutSwapBuffers();
 }
 
 #pragma endregion Opengl Callbacks
-
 
 int main(int argc, char **argv)
 {
@@ -796,7 +1145,6 @@ int main(int argc, char **argv)
 
 	cudaGraphicsMapResources(1, &viewResource);
 	cudaGraphicsSubResourceGetMappedArray(&viewArray, viewResource, 0, 0);
-
 
 	glutKeyboardFunc(Keyboard);
 	glutKeyboardUpFunc(KeyboardUp);
