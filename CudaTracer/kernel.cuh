@@ -15,13 +15,14 @@
 constexpr int WIDTH = 1280;
 constexpr int HEIGHT = 720;
 constexpr int TRACE_SAMPLES = 1000;
-constexpr auto TRACE_OUTER_LOOP_X = 8;
-constexpr auto TRACE_OUTER_LOOP_Y = 8;
+constexpr int TRACE_OUTER_LOOP_X = 8;
+constexpr int TRACE_OUTER_LOOP_Y = 8;
 constexpr float EPSILON = 1e-10;
-constexpr auto INF = 3.402823466e+38F;
+constexpr float INF = 3.402823466e+38F;
 constexpr int MAX_DEPTH = 5;
 constexpr int ROULETTE_DEPTH = 3;
 constexpr bool ENABLE_SURFACE_ACNE = false;
+constexpr int MAX_BUILD_PHOTON_TRHESHOLD = 5;
 
 // RealTime
 GLuint viewGLTexture;

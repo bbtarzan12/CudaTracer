@@ -13,7 +13,7 @@
 
 using namespace glm;
 
-enum MaterialType { DIFF, GLOSS, TRANS, SPEC };
+enum MaterialType { NONE, DIFF, GLOSS, TRANS, SPEC };
 
 int oldTimeSinceStart = 0;
 float deltaTime = 0;
@@ -30,6 +30,24 @@ struct Ray
 		this->origin = origin + direction * (ENABLE_SURFACE_ACNE ? EPSILON : 1);
 		this->direction = direction;
 	}
+};
+
+struct Photon
+{
+	__host__ __device__ Photon()
+	{
+		position = vec3(0, 0, 0);
+		normal = vec3(0, 0, 0);
+		power = vec3(0, 0, 0);
+		type = NONE;
+		isHit = false;
+	}
+
+	vec3 position;
+	vec3 normal;
+	vec3 power;
+	MaterialType type;
+	bool isHit;
 };
 
 struct Camera
@@ -49,6 +67,24 @@ struct Camera
 		proj = mat4(0);
 		aperture = 0;
 		focalDistance = 0.1f;
+	}
+
+	__device__ Ray GetRay(int x, int y)
+	{
+		vec3 wDir = glm::normalize(-forward);
+		vec3 uDir = glm::normalize(cross(up, wDir));
+		vec3 vDir = glm::cross(wDir, -uDir);
+
+		float top = glm::tan(fov * glm::pi<float>() / 360.0f);
+		float right = aspectRatio * top;
+		float bottom = -top;
+		float left = -right;
+
+		float imPlaneUPos = left + (right - left)*((x + 0.5f) / (float)width);
+		float imPlaneVPos = bottom + (top - bottom)*((y + 0.5f) / (float)height);
+
+		vec3 originDirection = imPlaneUPos * uDir + imPlaneVPos * vDir - wDir;
+		return Ray(position, normalize(originDirection));
 	}
 
 	__device__ Ray GetRay(curandState* randState, int x, int y, bool dof)
@@ -497,16 +533,19 @@ Mesh CreateBox(vec3 pos, vec3 halfExtents, Material material)
 dim3 block, grid;
 Camera* camera;
 bool enableDof = false;
+bool enablePhoton = false;
 Sphere spheres[] =
 {
-	Sphere(vec3(20, 8, 14), 8, Material(TRANS,  vec3(1))),
-	Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
-	Sphere(vec3(-14, 8, 14), 8, Material(SPEC,  vec3(1))),
-	Sphere(vec3(14, 8, -14), 8, Material(GLOSS,  vec3(1)))
+	//Sphere(vec3(20, 10, 14), 8, Material(TRANS,  vec3(1))),
+	//Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
+	//Sphere(vec3(-14, 8, 14), 8, Material(SPEC,  vec3(1))),
+	//Sphere(vec3(14, 8, -14), 8, Material(GLOSS,  vec3(1)))
+	Sphere(vec3(0, 65, 0), 8, Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
+	Sphere(vec3(0, 30, 0), 8,  Material(TRANS,  vec3(1)))
 };
 Mesh meshes[] =
 {
-	Mesh(vec3(0,0,0), "Cornell.obj")
+	Mesh(vec3(0,0,0), "Cornell_Long.obj")
 	//CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
 	//Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF)),
 	//Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
@@ -615,26 +654,6 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 position, glm::vec3 normal, vec3 &c
 	}
 }
 
-__device__ ObjectIntersection Intersect(Ray ray, Sphere* spheres, int count)
-{
-	ObjectIntersection intersection = ObjectIntersection();
-	ObjectIntersection temp = ObjectIntersection();
-
-	for (int i = 0; i < count; i++)
-	{
-		temp = spheres[i].Intersect(ray);
-
-		if (temp.hit)
-		{
-			if (intersection.t == 0 || temp.t < intersection.t)
-			{
-				intersection = temp;
-			}
-		}
-	}
-	return intersection;
-}
-
 __device__ ObjectIntersection Intersect(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount)
 {
 	ObjectIntersection intersection = ObjectIntersection();
@@ -669,6 +688,7 @@ __device__ ObjectIntersection Intersect(Ray ray, Sphere* spheres, Mesh* meshes, 
 	return intersection;
 }
 
+// Path Tracing
 __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, curandState* randState)
 {
 	vec3 resultColor = vec3(0, 0, 0);
@@ -686,6 +706,101 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount
 	return resultColor;
 }
 
+// Photon Map (Render Debug Image)
+__device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, Photon* map, int maxPhotons)
+{
+	vec3 color = vec3(0, 0, 0);
+	ObjectIntersection intersection = Intersect(ray, spheres, meshes, sphereCount, meshCount);
+	if (intersection.hit == false) return vec3(0, 0, 0);
+	vec3 position = ray.origin + ray.direction * intersection.t;
+	int nearPhotonCount = 0;
+	for (int i = 0; i < maxPhotons; i++)
+	{
+		if (dot(intersection.normal ,map[i].normal) > 0 && distance(position, map[i].position) <= 0.2f)
+		{
+			color += map[i].power;
+			nearPhotonCount++;
+		}
+	}
+	if (nearPhotonCount < 4)
+		return vec3(0, 0, 0);
+	color /= (float)nearPhotonCount;
+	return color;
+}
+
+// Photon Map (Building Photon Map)
+__device__ Photon TraceRay(Ray ray, vec3 lightEmission, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, curandState* randState)
+{
+	vec3 resultColor = lightEmission;
+	MaterialType beforeType = NONE;
+	for (int depth = 0; depth < 4; depth++)
+	{
+		ObjectIntersection intersection = Intersect(ray, spheres, meshes, sphereCount, meshCount);
+
+		if(intersection.hit == false) return Photon();
+
+		vec3 color = intersection.material.color;
+		float maxReflection = color.x > color.y && color.x > color.z ? color.x : color.y > color.z ? color.y : color.z;
+		float random = curand_uniform(randState);
+
+		vec3 position = ray.origin + ray.direction * intersection.t;
+
+		if (intersection.material.type == DIFF || intersection.material.type == GLOSS || intersection.material.type == SPEC)
+		{
+			if (beforeType == TRANS)
+			{
+				Photon photon = Photon();
+				photon.isHit = intersection.hit;
+				photon.normal = intersection.normal;
+				photon.position = position;
+				photon.type = intersection.material.type;
+				photon.power = resultColor;
+				return photon;
+			}
+		}
+		beforeType = intersection.material.type;
+		ray = GetReflectedRay(ray, position, intersection.normal, resultColor, intersection.material, randState);
+	}
+	return Photon();
+}
+
+// Path Tracing + Photon Map
+__device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, Photon* map, int maxPhotons, curandState* randState)
+{
+	vec3 resultColor = vec3(0, 0, 0);
+	vec3 mask = vec3(1, 1, 1);
+
+	for (int depth = 0; depth < MAX_DEPTH; depth++)
+	{
+		ObjectIntersection intersection = Intersect(ray, spheres, meshes, sphereCount, meshCount);
+
+		if (intersection.hit == 0) return resultColor * vec3(0.2f, 0.2f, 0.2f);
+		vec3 position = ray.origin + ray.direction * intersection.t;
+		vec3 emission = intersection.material.emission;
+		vec3 photonColor = vec3(0, 0, 0);
+		int nearPhotonCount = 0;
+		for (int i = 0; i < maxPhotons; i++)
+		{
+			float dist = distance(position, map[i].position);
+			if (dist <= 5.0f && dot(intersection.normal, map[i].normal) > 0)
+			{
+				photonColor += map[i].power * 1.0f / (pi<float>() * dist);
+				nearPhotonCount++;
+			}
+		}
+		if (nearPhotonCount >= 3)
+			photonColor /= (float)nearPhotonCount;
+
+		if (intersection.material.type == DIFF || intersection.material.type == GLOSS || intersection.material.type == SPEC)
+			emission += photonColor;
+
+		resultColor += mask * emission;
+		ray = GetReflectedRay(ray, position, intersection.normal, mask, intersection.material, randState);
+	}
+	return resultColor;
+}
+
+// Image Rendering Kernel
 __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, vec3* deviceImage)
 {
 	int width = camera->width;
@@ -704,7 +819,7 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 	vec3 color = vec3(0, 0, 0);
 	for (int s = 0; s < TRACE_SAMPLES; s++)
 	{
-		curand_init(threadId + WangHash(s), 0, 0, &randState);
+		curand_init(WangHash(threadId) + WangHash(s), 0, 0, &randState);
 		Ray ray = camera->GetRay(&randState, x, y, dof);
 		color += TraceRay(ray, spheres, meshes, sphereCount, meshCount, &randState);
 	}
@@ -712,6 +827,7 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 	deviceImage[i] = color;
 }
 
+// Real Time Rendering Kernel
 __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, int frame, cudaSurfaceObject_t surface)
 {
 	int width = camera->width;
@@ -729,13 +845,82 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 	surf2Dread(&originColor, surface, x * sizeof(float4), y);
 
 	vec3 resultColor = vec3(0, 0, 0);
-	curand_init(threadId + WangHash(frame), 0, 0, &randState);
+	curand_init(WangHash(threadId) + WangHash(frame), 0, 0, &randState);
 	Ray ray = camera->GetRay(&randState, x, y, dof);
 	vec3 color = TraceRay(ray, spheres, meshes, sphereCount, meshCount, &randState);
 	resultColor = (vec3(originColor.x, originColor.y, originColor.z) * (float)(frame - 1) + color) / (float)frame;
 	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
 }
 
+// Real time + Photon Mapping Kernel
+__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, int frame, Photon* map, int mapSize, cudaSurfaceObject_t surface)
+{
+	int width = camera->width;
+	int height = camera->height;
+	int x = gridDim.x * blockDim.x * loopX + blockIdx.x * blockDim.x + threadIdx.x;
+	int y = gridDim.y * blockDim.y * loopY + blockIdx.y * blockDim.y + threadIdx.y;
+	int threadId = (blockIdx.x + blockIdx.y * gridDim.x) * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x) + threadIdx.x;
+
+	int i = y * width + x;
+
+	if (i >= width * height) return;
+	curandState randState;
+	float4 originColor;
+	surf2Dread(&originColor, surface, x * sizeof(float4), y);
+
+	vec3 resultColor = vec3(0, 0, 0);
+	curand_init(WangHash(threadId) + WangHash(frame), 0, 0, &randState);
+	Ray ray = camera->GetRay(&randState, x, y, dof);
+	vec3 color = TraceRay(ray, spheres, meshes, sphereCount, meshCount, map, mapSize, &randState);
+	resultColor = (vec3(originColor.x, originColor.y, originColor.z) * (float)(frame - 1) + color) / (float)frame;
+	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
+}
+
+// Photon Mapping Debug Image Rendering Kernel
+__global__ void DebugPhotonMapKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, Photon* map, int maxPhotons, vec3* deviceImage)
+{
+	int width = camera->width;
+	int height = camera->height;
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+	int y = blockIdx.y * blockDim.y + threadIdx.y;
+	int threadId = (blockIdx.x + blockIdx.y * gridDim.x) * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x) + threadIdx.x;
+
+	int i = y * width + x;
+	if (i >= width * height) return;
+
+	Ray ray = camera->GetRay(x, y);
+	vec3 color = TraceRay(ray, spheres, meshes, sphereCount, meshCount, map, maxPhotons);
+	deviceImage[i] = color;
+}
+
+// Kernel to Build Photon Map
+__global__ void PhotonMapKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, vec3 lightPos, vec3 lightEmission, int maxPhotons, Photon* map, int frame = 0)
+{
+	int i = threadIdx.x + blockDim.x*blockIdx.x;
+	if (i >= maxPhotons) return;
+
+	curandState randState;
+
+	Photon photon;
+	int threshold = MAX_BUILD_PHOTON_TRHESHOLD;
+	int count = 0;
+	while (!photon.isHit)
+	{
+		if (count > threshold)
+			break;
+		curand_init(WangHash(WangHash(i) + WangHash(count) + WangHash(maxPhotons) + WangHash(frame)), 0, 0, &randState);
+		count++;
+
+		float theta = 2 * pi<float>() * curand_uniform(&randState);
+		float phi = acos(1 - 2 * curand_uniform(&randState));
+		vec3 dir = normalize(vec3(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi)));
+		Ray ray = Ray(lightPos, dir);
+		photon = TraceRay(ray, lightEmission, spheres, meshes, sphereCount, meshCount, &randState);
+	}
+	map[i] = photon;
+}
+
+// Image Rendering Loop
 void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, bool dof, vec3* deviceImage)
 {
 	int progress = 0;
@@ -759,6 +944,7 @@ void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount,
 	}
 }
 
+// Real Time Rendering Loop
 void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, bool dof, cudaSurfaceObject_t surface)
 {
 	int progress = 0;
@@ -771,6 +957,30 @@ void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount,
 			cudaEventCreate(&start);
 			cudaEventRecord(start, 0);
 			PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, frame, surface);
+			cudaEventCreate(&stop);
+			cudaEventRecord(stop, 0);
+			cudaEventSynchronize(stop);
+
+			cudaEventElapsedTime(&elapsedTime, start, stop);
+			printf("\rTracing %d/%d  |  Elapsed time : %f ms", ++progress, TRACE_OUTER_LOOP_X * TRACE_OUTER_LOOP_Y, elapsedTime);
+			cudaDeviceSynchronize();
+		}
+	}
+}
+
+// Photon Mapping Rendering Loop
+void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, bool dof, Photon* map, int mapSize, cudaSurfaceObject_t surface)
+{
+	int progress = 0;
+	for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
+	{
+		for (int j = 0; j < TRACE_OUTER_LOOP_Y; j++)
+		{
+			cudaEvent_t start, stop;
+			float elapsedTime;
+			cudaEventCreate(&start);
+			cudaEventRecord(start, 0);
+			PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, frame, map, mapSize, surface);
 			cudaEventCreate(&stop);
 			cudaEventRecord(stop, 0);
 			cudaEventSynchronize(stop);
@@ -801,6 +1011,126 @@ void SaveImage(const char* path, int width, int height, const vec3* colors)
 	dib = FreeImage_ConvertTo24Bits(dib);
 	bool success = FreeImage_Save(FIF_PNG, dib, path);
 	if (!success) std::cout << "Image Save Error " << std::endl;
+	else std::cout << "Image Save Success : " << path << std::endl;
+}
+
+Photon* BuildPhotonMap(int maxPhotons, int frame = 0)
+{
+	Photon *photons, *cudaPhotonMap/*, *cudaDebugPhotonMap*/;
+
+	vec3 lightPos = vec3(0, 50, 0);
+	vec3 lightEmission = vec3(1.5, 1.5, 1.5);
+
+	block = dim3(256, 1);
+	grid.x = ceil(maxPhotons / block.x);
+	grid.y = 1;
+
+	gpuErrorCheck(cudaMalloc(&cudaPhotonMap, sizeof(Photon) * maxPhotons));
+	//gpuErrorCheck(cudaMalloc(&cudaDebugPhotonMap, sizeof(Photon) * maxPhotons));
+
+	cudaEvent_t start, stop;
+	float memoryAllocTime, renderingTime;
+	cudaEventCreate(&start);
+	cudaEventRecord(start, 0);
+
+	Camera* cudaCamera;
+	gpuErrorCheck(cudaMalloc(&cudaCamera, sizeof(Camera)));
+	gpuErrorCheck(cudaMemcpy(cudaCamera, camera, sizeof(Camera), cudaMemcpyHostToDevice));
+
+	int sphereCount = sizeof(spheres) / sizeof(Sphere);
+	Sphere* cudaSpheres;
+	gpuErrorCheck(cudaMalloc(&cudaSpheres, sizeof(Sphere) * sphereCount));
+	gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres, sizeof(Sphere) * sphereCount, cudaMemcpyHostToDevice));
+
+	int meshCount = sizeof(meshes) / sizeof(Mesh);
+	Mesh* cudaMeshes;
+	std::vector<Mesh>* meshVector = new std::vector<Mesh>;
+	std::vector<Triangle*> triangleVector;
+	for (int i = 0; i < meshCount; i++)
+	{
+		Mesh currentMesh = meshes[i];
+		Mesh cudaMesh = currentMesh;
+		Triangle* cudaTriangles;
+		gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
+		gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
+		cudaMesh.triangles = cudaTriangles;
+		meshVector->push_back(cudaMesh);
+		triangleVector.push_back(cudaTriangles);
+	}
+	gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshCount));
+	gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector->data(), sizeof(Mesh) * meshCount, cudaMemcpyHostToDevice));
+
+	cudaDeviceSynchronize();
+	cudaEventCreate(&stop);
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&memoryAllocTime, start, stop);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
+
+	cudaEventCreate(&start);
+	cudaEventRecord(start, 0);
+	PhotonMapKernel << <grid, block >> > (cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, lightPos, lightEmission, maxPhotons, cudaPhotonMap, frame);
+	cudaDeviceSynchronize();
+	cudaEventCreate(&stop);
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&renderingTime, start, stop);
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
+	printf("Building Photon Map End | Memory Allocation Time : %f ms | Building time : %f ms\n", memoryAllocTime, renderingTime);
+
+	{
+		//int width = camera->width;
+	//int height = camera->height;
+	//vec3* deviceImage;
+	//gpuErrorCheck(cudaMalloc(&deviceImage, width * height * sizeof(vec3)));
+
+	//gpuErrorCheck(cudaMemcpy(cudaDebugPhotonMap, cudaPhotonMap, sizeof(Photon) * maxPhotons, cudaMemcpyDeviceToDevice));
+	//block = dim3(16, 9);
+	//grid.x = ceil(width / block.x);
+	//grid.y = ceil(height / block.y);
+
+	//cudaEventCreate(&start);
+	//cudaEventRecord(start, 0);
+	//DebugPhotonMapKernel<<<grid, block>>>(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, cudaDebugPhotonMap, maxPhotons, deviceImage);
+	//cudaDeviceSynchronize();
+	//cudaEventCreate(&stop);
+	//cudaEventRecord(stop, 0);
+	//cudaEventSynchronize(stop);
+	//cudaEventElapsedTime(&renderingTime, start, stop);
+	//cudaEventDestroy(start);
+	//cudaEventDestroy(stop);
+	//printf("Calculate Debug Photon Map Finished : %f ms\n", renderingTime);
+
+	//vec3* hostImage = new vec3[width * height];
+	//gpuErrorCheck(cudaMemcpy(hostImage, deviceImage, width * height * sizeof(vec3), cudaMemcpyDeviceToHost));
+	//SaveImage("Result_PhotonMap.png", width, height, hostImage);
+	////photons = new Photon[maxPhotons];
+	////gpuErrorCheck(cudaMemcpy(photons, cudaDebugPhotonMap, sizeof(Photon) * maxPhotons, cudaMemcpyDeviceToHost));
+
+	//cudaFree(deviceImage);
+	//delete hostImage;
+	//cudaFree(cudaDebugPhotonMap);
+	}
+
+	photons = new Photon[maxPhotons];
+	gpuErrorCheck(cudaMemcpy(photons, cudaPhotonMap, sizeof(Photon) * maxPhotons, cudaMemcpyDeviceToHost));
+
+	cudaFree(cudaPhotonMap);
+	cudaFree(cudaCamera);
+	cudaFree(cudaSpheres);
+	for (auto & triangle : triangleVector)
+	{
+		cudaFree(triangle);
+	}
+	for (auto & mesh : *meshVector)
+	{
+		cudaFree(&mesh);
+	}
+	delete meshVector;
+	cudaFree(cudaMeshes);
+	return photons;
 }
 
 void RenderImage(bool dof)
@@ -864,18 +1194,19 @@ void RenderImage(bool dof)
 	{
 		cudaFree(triangle);
 	}
+	for (auto & mesh : *meshVector)
+	{
+		cudaFree(&mesh);
+	}
+	delete meshVector;
 	cudaFree(cudaMeshes);
 	delete hostImage;
 }
 
-void RenderRealTime(cudaSurfaceObject_t surface, bool dof, int frame)
+void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, int frame)
 {
 	int width = camera->width;
 	int height = camera->height;
-
-	block = dim3(16, 9);
-	grid.x = ceil(ceil(width / TRACE_OUTER_LOOP_X) / block.x);
-	grid.y = ceil(ceil(height / TRACE_OUTER_LOOP_Y) / block.y);
 
 	cudaEvent_t start, stop;
 	float memoryAllocTime, renderingTime;
@@ -917,9 +1248,25 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, int frame)
 	cudaEventDestroy(start);
 	cudaEventDestroy(stop);
 
+	int photonMapSize = 0;
+	Photon* cudaPhotonMap;
+	Photon* photonMap;
+	if (photon)
+	{
+		photonMapSize = 100000;
+		photonMap = BuildPhotonMap(photonMapSize, frame);
+
+		gpuErrorCheck(cudaMalloc(&cudaPhotonMap, sizeof(Photon) * photonMapSize));
+		gpuErrorCheck(cudaMemcpy(cudaPhotonMap, photonMap, sizeof(Photon) * photonMapSize, cudaMemcpyHostToDevice));
+	}
+
+	block = dim3(16, 9);
+	grid.x = ceil(ceil(width / TRACE_OUTER_LOOP_X) / block.x);
+	grid.y = ceil(ceil(height / TRACE_OUTER_LOOP_Y) / block.y);
+
 	cudaEventCreate(&start);
 	cudaEventRecord(start, 0);
-	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, frame, dof, surface);
+	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, frame, dof, cudaPhotonMap, photonMapSize, surface);
 	cudaDeviceSynchronize();
 	cudaEventCreate(&stop);
 	cudaEventRecord(stop, 0);
@@ -929,12 +1276,22 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, int frame)
 	cudaEventDestroy(stop);
 	printf("\rRendering End(%d) | Memory Allocation Time : %f ms | Rendering time : %f ms\n", frame, memoryAllocTime, renderingTime);
 
+	if (photon)
+	{
+		delete photonMap;
+		cudaFree(cudaPhotonMap);
+	}
 	cudaFree(cudaCamera);
 	cudaFree(cudaSpheres);
 	for (auto & triangle : triangleVector)
 	{
 		cudaFree(triangle);
 	}
+	for (auto & mesh : *meshVector)
+	{
+		cudaFree(&mesh);
+	}
+	delete meshVector;
 	cudaFree(cudaMeshes);
 }
 
@@ -953,6 +1310,11 @@ void Keyboard(unsigned char key, int x, int y)
 		enableDof = !enableDof;
 		cudaDirty = true;
 	}
+	if (IsKeyDown('b'))
+	{
+		enablePhoton = !enablePhoton;
+		cudaDirty = true;
+	}
 	if (IsKeyDown('q'))
 	{
 		RenderImage(enableDof);
@@ -961,28 +1323,36 @@ void Keyboard(unsigned char key, int x, int y)
 	{
 		cudaToggle = !cudaToggle;
 		frame = 1;
+		cudaDirty = false;
 	}
 	if (IsKeyDown('t'))
 	{
 		camera->aperture += 0.1f;
 		cudaDirty = true;
+		printf("%f %f\n", camera->aperture, camera->focalDistance);
 	}
 	if (IsKeyDown('g'))
 	{
 		camera->aperture -= 0.1f;
 		cudaDirty = true;
+		printf("%f %f\n", camera->aperture, camera->focalDistance);
 	}
 	if (IsKeyDown('y'))
 	{
 		camera->focalDistance += 0.5f;
 		cudaDirty = true;
+		printf("%f %f\n", camera->aperture, camera->focalDistance);
 	}
 	if (IsKeyDown('h'))
 	{
 		camera->focalDistance -= 0.5f;
 		cudaDirty = true;
+		printf("%f %f\n", camera->aperture, camera->focalDistance);
 	}
-	printf("%f %f\n", camera->aperture, camera->focalDistance);
+	if (IsKeyDown('p'))
+	{
+		printf("Camera Position : %f %f %f\n", camera->position.x, camera->position.y, camera->position.z);
+	}
 	glutPostRedisplay();
 }
 void KeyboardUp(unsigned char key, int x, int y)
@@ -1038,7 +1408,6 @@ void Idle()
 	oldTimeSinceStart = timeSinceStart;
 	glutPostRedisplay();
 }
-
 void Display(void)
 {
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1060,10 +1429,10 @@ void Display(void)
 		{
 			if (cudaDirty)
 			{
-				frame = 1;
+				frame = 2;
 				cudaDirty = false;
 			}
-			RenderRealTime(viewCudaSurfaceObject, enableDof, frame++);
+			RenderRealTime(viewCudaSurfaceObject, enableDof, enablePhoton, frame++);
 		}
 		cudaDestroySurfaceObject(viewCudaSurfaceObject);
 
@@ -1085,7 +1454,6 @@ void Display(void)
 				glTexCoord2f(1, 1);	glVertex2f(width, 0);
 				glTexCoord2f(1, 0);	glVertex2f(width, height);
 				glTexCoord2f(0, 0);	glVertex2f(0, height);
-
 			}
 			glEnd();
 		}
