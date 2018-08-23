@@ -51,9 +51,9 @@ struct Camera
 		focalDistance = 0.1f;
 	}
 
-	__device__ Ray GetRay(curandState* randState, int x, int y)
+	__device__ Ray GetRay(curandState* randState, int x, int y, bool dof)
 	{
-		/*float jitterValueX = curand_uniform(randState) - 0.5;
+		float jitterValueX = curand_uniform(randState) - 0.5;
 		float jitterValueY = curand_uniform(randState) - 0.5;
 
 		vec3 wDir = glm::normalize(-forward);
@@ -68,41 +68,34 @@ struct Camera
 		float imPlaneUPos = left + (right - left)*(((float)x + jitterValueX) / (float)width);
 		float imPlaneVPos = bottom + (top - bottom)*(((float)y + jitterValueY) / (float)height);
 
-		return Ray(position, (glm::normalize(imPlaneUPos * uDir + imPlaneVPos * vDir - wDir)));*/
-
-		vec3 horizontalAxis = normalize(cross(forward, up));
-		vec3 verticalAxis = cross(horizontalAxis, forward);
-		vec3 middle = position + forward;
-		vec3 horizontal = horizontalAxis * tan(fov * pi<float>() / 360.0f);
-		vec3 vertical = verticalAxis * tan(-fov * pi<float>() / 360.0f);
-
-		float jitterValueX = curand_uniform(randState) - 0.5;
-		float jitterValueY = curand_uniform(randState) - 0.5;
-		float sx = (jitterValueX + x) / width;
-		float sy = (jitterValueY + y) / height;
-
-		vec3 pointOnPlaneOneUnitAwayFromEye = middle + (horizontal * ((2 * sx) - 1)) + (vertical * ((2 * sy) - 1));
-		vec3 pointOnImagePlane = position + ((pointOnPlaneOneUnitAwayFromEye - position) * focalDistance);
-
-		vec3 aperturePoint = vec3(0, 0, 0);
-
-		if (aperture >= EPSILON)
+		vec3 originDirection = imPlaneUPos * uDir + imPlaneVPos * vDir - wDir;
+		vec3 pointOnImagePlane = position + ((originDirection) * focalDistance);
+		if (dof)
 		{
-			float random1 = curand_uniform(randState);
-			float random2 = curand_uniform(randState);
+			vec3 aperturePoint = vec3(0, 0, 0);
 
-			float angle = two_pi<float>() * random1;
-			float distance = aperture * sqrt(random2);
-			float apertureX = cos(angle) * distance;
-			float apertureY = sin(angle) * distance;
+			if (aperture >= EPSILON)
+			{
+				float random1 = curand_uniform(randState);
+				float random2 = curand_uniform(randState);
 
-			aperturePoint = position + (horizontalAxis * apertureX) + (verticalAxis * apertureY);
+				float angle = two_pi<float>() * random1;
+				float distance = aperture * sqrt(random2);
+				float apertureX = cos(angle) * distance;
+				float apertureY = sin(angle) * distance;
+
+				aperturePoint = position + (wDir * apertureX) + (uDir * apertureY);
+			}
+			else
+			{
+				aperturePoint = position;
+			}
+			return Ray(aperturePoint, normalize(pointOnImagePlane - aperturePoint));
 		}
 		else
 		{
-			aperturePoint = position;
+			return Ray(position, normalize(originDirection));
 		}
-		return Ray(aperturePoint, normalize(pointOnImagePlane - aperturePoint));
 	}
 
 	void UpdateScreen(int width, int height)
@@ -712,7 +705,7 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 	for (int s = 0; s < TRACE_SAMPLES; s++)
 	{
 		curand_init(threadId + WangHash(s), 0, 0, &randState);
-		Ray ray = camera->GetRay(&randState, x, y);
+		Ray ray = camera->GetRay(&randState, x, y, false);
 		color += TraceRay(ray, spheres, meshes, sphereCount, meshCount, &randState);
 	}
 	color *= invSample;
@@ -737,7 +730,7 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 
 	vec3 resultColor = vec3(0, 0, 0);
 	curand_init(threadId + WangHash(frame), 0, 0, &randState);
-	Ray ray = camera->GetRay(&randState, x, y);
+	Ray ray = camera->GetRay(&randState, x, y, true);
 	vec3 color = TraceRay(ray, spheres, meshes, sphereCount, meshCount, &randState);
 	resultColor = (vec3(originColor.x, originColor.y, originColor.z) * (float)(frame - 1) + color) / (float)frame;
 	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
