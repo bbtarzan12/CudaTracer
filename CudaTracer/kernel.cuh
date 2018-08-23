@@ -14,7 +14,7 @@
 
 constexpr int WIDTH = 1280;
 constexpr int HEIGHT = 720;
-constexpr int TRACE_SAMPLES = 5000;
+constexpr int TRACE_SAMPLES = 1000;
 constexpr auto TRACE_OUTER_LOOP_X = 8;
 constexpr auto TRACE_OUTER_LOOP_Y = 8;
 constexpr float EPSILON = 1e-10;

@@ -76,11 +76,11 @@ struct Camera
 
 			if (aperture >= EPSILON)
 			{
-				float random1 = curand_uniform(randState);
-				float random2 = curand_uniform(randState);
+				float r1 = curand_uniform(randState);
+				float r2 = curand_uniform(randState);
 
-				float angle = two_pi<float>() * random1;
-				float distance = aperture * sqrt(random2);
+				float angle = two_pi<float>() * r1;
+				float distance = aperture * sqrt(r2);
 				float apertureX = cos(angle) * distance;
 				float apertureY = sin(angle) * distance;
 
@@ -456,6 +456,8 @@ struct Mesh
 
 #pragma endregion Structs
 
+#pragma region Scene
+
 Mesh CreateBox(vec3 pos, vec3 halfExtents, Material material)
 {
 	float halfWidth = halfExtents[0];
@@ -492,11 +494,9 @@ Mesh CreateBox(vec3 pos, vec3 halfExtents, Material material)
 	return Mesh(pos, triangles.data(), 12, material);
 }
 
-
-#pragma region Scene Variables
-
 dim3 block, grid;
 Camera* camera;
+bool enableDof = false;
 Sphere spheres[] =
 {
 	Sphere(vec3(20, 8, 14), 8, Material(TRANS,  vec3(1))),
@@ -517,7 +517,7 @@ Mesh meshes[] =
 	//CreateBox(vec3(0, 15, -30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75)))
 };
 
-#pragma endregion Scene Variables
+#pragma endregion Scene
 
 #pragma region Kernels
 
@@ -686,7 +686,7 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount
 	return resultColor;
 }
 
-__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, vec3* deviceImage)
+__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, vec3* deviceImage)
 {
 	int width = camera->width;
 	int height = camera->height;
@@ -705,14 +705,14 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 	for (int s = 0; s < TRACE_SAMPLES; s++)
 	{
 		curand_init(threadId + WangHash(s), 0, 0, &randState);
-		Ray ray = camera->GetRay(&randState, x, y, false);
+		Ray ray = camera->GetRay(&randState, x, y, dof);
 		color += TraceRay(ray, spheres, meshes, sphereCount, meshCount, &randState);
 	}
 	color *= invSample;
 	deviceImage[i] = color;
 }
 
-__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, int frame, cudaSurfaceObject_t surface)
+__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, int frame, cudaSurfaceObject_t surface)
 {
 	int width = camera->width;
 	int height = camera->height;
@@ -730,13 +730,13 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 
 	vec3 resultColor = vec3(0, 0, 0);
 	curand_init(threadId + WangHash(frame), 0, 0, &randState);
-	Ray ray = camera->GetRay(&randState, x, y, true);
+	Ray ray = camera->GetRay(&randState, x, y, dof);
 	vec3 color = TraceRay(ray, spheres, meshes, sphereCount, meshCount, &randState);
 	resultColor = (vec3(originColor.x, originColor.y, originColor.z) * (float)(frame - 1) + color) / (float)frame;
 	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
 }
 
-void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, vec3* deviceImage)
+void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, bool dof, vec3* deviceImage)
 {
 	int progress = 0;
 	for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
@@ -747,7 +747,7 @@ void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount,
 			float elapsedTime;
 			cudaEventCreate(&start);
 			cudaEventRecord(start, 0);
-			PathKernel<< <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, deviceImage);
+			PathKernel<< <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, deviceImage);
 			cudaEventCreate(&stop);
 			cudaEventRecord(stop, 0);
 			cudaEventSynchronize(stop);
@@ -759,7 +759,7 @@ void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount,
 	}
 }
 
-void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, cudaSurfaceObject_t surface)
+void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, bool dof, cudaSurfaceObject_t surface)
 {
 	int progress = 0;
 	for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
@@ -770,7 +770,7 @@ void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount,
 			float elapsedTime;
 			cudaEventCreate(&start);
 			cudaEventRecord(start, 0);
-			PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, frame, surface);
+			PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, frame, surface);
 			cudaEventCreate(&stop);
 			cudaEventRecord(stop, 0);
 			cudaEventSynchronize(stop);
@@ -803,7 +803,7 @@ void SaveImage(const char* path, int width, int height, const vec3* colors)
 	if (!success) std::cout << "Image Save Error " << std::endl;
 }
 
-void RenderImage()
+void RenderImage(bool dof)
 {
 	int width = camera->width;
 	int height = camera->height;
@@ -845,7 +845,7 @@ void RenderImage()
 	cudaEventCreate(&start);
 	cudaEventRecord(start, 0);
 	cudaMalloc(&deviceImage, width * height * sizeof(vec3));
-	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, deviceImage);
+	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, dof, deviceImage);
 	cudaDeviceSynchronize();
 	cudaEventCreate(&stop);
 	cudaEventRecord(stop, 0);
@@ -868,7 +868,7 @@ void RenderImage()
 	delete hostImage;
 }
 
-void RenderRealTime(cudaSurfaceObject_t surface, int frame)
+void RenderRealTime(cudaSurfaceObject_t surface, bool dof, int frame)
 {
 	int width = camera->width;
 	int height = camera->height;
@@ -919,7 +919,7 @@ void RenderRealTime(cudaSurfaceObject_t surface, int frame)
 
 	cudaEventCreate(&start);
 	cudaEventRecord(start, 0);
-	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, frame, surface);
+	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, frame, dof, surface);
 	cudaDeviceSynchronize();
 	cudaEventCreate(&stop);
 	cudaEventRecord(stop, 0);
@@ -948,9 +948,14 @@ void Keyboard(unsigned char key, int x, int y)
 	mousePos[0] = x;
 	mousePos[1] = y;
 
+	if (IsKeyDown('r'))
+	{
+		enableDof = !enableDof;
+		cudaDirty = true;
+	}
 	if (IsKeyDown('q'))
 	{
-		RenderImage();
+		RenderImage(enableDof);
 	}
 	if (IsKeyDown('f'))
 	{
@@ -1058,7 +1063,7 @@ void Display(void)
 				frame = 1;
 				cudaDirty = false;
 			}
-			RenderRealTime(viewCudaSurfaceObject, frame++);
+			RenderRealTime(viewCudaSurfaceObject, enableDof, frame++);
 		}
 		cudaDestroySurfaceObject(viewCudaSurfaceObject);
 
