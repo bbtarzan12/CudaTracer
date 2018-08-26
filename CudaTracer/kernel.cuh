@@ -15,14 +15,21 @@
 constexpr int WIDTH = 1280;
 constexpr int HEIGHT = 720;
 constexpr int TRACE_SAMPLES = 1000;
-constexpr int TRACE_OUTER_LOOP_X = 8;
-constexpr int TRACE_OUTER_LOOP_Y = 8;
-constexpr float EPSILON = 1e-10;
+constexpr int TRACE_OUTER_LOOP_X = 4;
+constexpr int TRACE_OUTER_LOOP_Y = 3;
+constexpr float EPSILON = 1e-2;
 constexpr float INF = 3.402823466e+38F;
 constexpr int MAX_DEPTH = 5;
 constexpr int ROULETTE_DEPTH = 3;
 constexpr bool ENABLE_SURFACE_ACNE = false;
 constexpr int MAX_BUILD_PHOTON_TRHESHOLD = 5;
+
+using namespace glm;
+
+enum MaterialType { NONE, DIFF, GLOSS, TRANS, SPEC };
+
+int oldTimeSinceStart = 0;
+float deltaTime = 0;
 
 // RealTime
 GLuint viewGLTexture;
@@ -31,6 +38,11 @@ cudaArray* viewArray;
 bool cudaToggle = true;
 bool cudaDirty = false;
 int frame = 1;
+
+// Rendering
+bool enableDof = false;
+bool enablePhoton = false;
+bool enableSaveImage = false;
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
 {

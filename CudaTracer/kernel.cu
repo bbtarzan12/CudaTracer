@@ -11,14 +11,6 @@
 #include "kernel.cuh"
 #include "Input.h"
 
-using namespace glm;
-
-enum MaterialType { NONE, DIFF, GLOSS, TRANS, SPEC };
-
-int oldTimeSinceStart = 0;
-float deltaTime = 0;
-
-
 #pragma region Structs
 
 struct Ray
@@ -27,7 +19,7 @@ struct Ray
 	vec3 direction;
 	__host__ __device__ Ray(vec3 origin, vec3 direction)
 	{
-		this->origin = origin + direction * (ENABLE_SURFACE_ACNE ? EPSILON : 1);
+		this->origin = origin + direction * (ENABLE_SURFACE_ACNE ? 0 : EPSILON);
 		this->direction = direction;
 	}
 };
@@ -55,14 +47,14 @@ struct Camera
 	__host__ __device__ Camera()
 	{
 		proj = glm::mat4(1.0f);
-		position = glm::vec3(13.704636f, 25.204121f, -25.861454f);
+		position = glm::vec3(36.040195f, 48.419228f, -38.064163f);
 		fov = 70.0f;
 		nearPlane = 0.1f;
 		farPlane = 1000.0f;
 		moveSpeed = 25.0f;
 		mouseSpeed = 10.0f;
-		pitch = -37.0f;
-		yaw = 330.0f;
+		pitch = -47.0f;
+		yaw = 312.8f;
 		view = mat4(0);
 		proj = mat4(0);
 		aperture = 0;
@@ -532,20 +524,20 @@ Mesh CreateBox(vec3 pos, vec3 halfExtents, Material material)
 
 dim3 block, grid;
 Camera* camera;
-bool enableDof = false;
-bool enablePhoton = false;
+
 Sphere spheres[] =
 {
-	//Sphere(vec3(20, 10, 14), 8, Material(TRANS,  vec3(1))),
-	//Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
-	//Sphere(vec3(-14, 8, 14), 8, Material(SPEC,  vec3(1))),
-	//Sphere(vec3(14, 8, -14), 8, Material(GLOSS,  vec3(1)))
-	Sphere(vec3(0, 65, 0), 8, Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
-	Sphere(vec3(0, 30, 0), 8,  Material(TRANS,  vec3(1)))
+	Sphere(vec3(20, 10, 14), 8, Material(TRANS,  vec3(1))),
+	Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
+	Sphere(vec3(-14, 8, 14), 8, Material(SPEC,  vec3(1))),
+	Sphere(vec3(14, 8, -14), 8, Material(GLOSS,  vec3(1)))
+	//Sphere(vec3(0, 65, 0), 8, Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
+	//Sphere(vec3(0, 30, 0), 8,  Material(TRANS,  vec3(1)))
 };
 Mesh meshes[] =
 {
-	Mesh(vec3(0,0,0), "Cornell_Long.obj")
+	//Mesh(vec3(0,0,0), "Cornell_Long.obj")
+	Mesh(vec3(0,0,0), "Cornell.obj")
 	//CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
 	//Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF)),
 	//Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
@@ -1138,7 +1130,7 @@ void RenderImage(bool dof)
 	int width = camera->width;
 	int height = camera->height;
 
-	block = dim3(16, 9);
+	block = dim3(32, 18);
 	grid.x = ceil(ceil(width / TRACE_OUTER_LOOP_X) / block.x);
 	grid.y = ceil(ceil(height / TRACE_OUTER_LOOP_Y) / block.y);
 
@@ -1317,7 +1309,10 @@ void Keyboard(unsigned char key, int x, int y)
 	}
 	if (IsKeyDown('q'))
 	{
-		RenderImage(enableDof);
+		enableSaveImage = true;
+		frame = 1;
+		cudaDirty = false;
+		cudaToggle = true;
 	}
 	if (IsKeyDown('f'))
 	{
@@ -1352,6 +1347,7 @@ void Keyboard(unsigned char key, int x, int y)
 	if (IsKeyDown('p'))
 	{
 		printf("Camera Position : %f %f %f\n", camera->position.x, camera->position.y, camera->position.z);
+		printf("Pitch Yaw : %f %f\n", camera->pitch, camera->yaw);
 	}
 	glutPostRedisplay();
 }
@@ -1429,7 +1425,7 @@ void Display(void)
 		{
 			if (cudaDirty)
 			{
-				frame = 2;
+				frame = 1;
 				cudaDirty = false;
 			}
 			RenderRealTime(viewCudaSurfaceObject, enableDof, enablePhoton, frame++);
@@ -1457,6 +1453,23 @@ void Display(void)
 			}
 			glEnd();
 		}
+
+		if (enableSaveImage && frame >= TRACE_SAMPLES)
+		{
+			enableSaveImage = false;
+			cudaToggle = false;
+			cudaDirty = false;
+			frame = 1;
+
+			GLubyte *pixels = new GLubyte[3 * width*height];
+			glPixelStorei(GL_PACK_ALIGNMENT, 1);
+			glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+			FIBITMAP* image = FreeImage_ConvertFromRawBits(pixels, width, height, 3 * width, 24, FI_RGBA_RED, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, false);
+			FreeImage_Save(FIF_PNG, image, "Result.png", 0);
+			FreeImage_Unload(image);
+			delete pixels;
+		}
+
 		glBindTexture(GL_TEXTURE_2D, 0);
 		glFinish();
 		glEnable(GL_LIGHTING);
