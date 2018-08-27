@@ -16,7 +16,7 @@
 
 constexpr int WIDTH = 1280;
 constexpr int HEIGHT = 720;
-constexpr int TRACE_SAMPLES = 1000;
+constexpr int TRACE_SAMPLES = 100;
 constexpr int TRACE_OUTER_LOOP_X = 4;
 constexpr int TRACE_OUTER_LOOP_Y = 3;
 constexpr float EPSILON = 1e-2;
@@ -24,7 +24,7 @@ constexpr float INF = 3.402823466e+38F;
 constexpr int MAX_DEPTH = 5;
 constexpr int ROULETTE_DEPTH = 3;
 constexpr bool ENABLE_SURFACE_ACNE = false;
-constexpr int MAX_BUILD_PHOTON_TRHESHOLD = 5;
+
 
 using namespace glm;
 
@@ -53,6 +53,10 @@ float4* cudaHDRmap;
 bool enableDof = false;
 bool enablePhoton = false;
 bool enableSaveImage = false;
+
+// Photon
+constexpr int MAX_BUILD_PHOTON_TRHESHOLD = 5;
+constexpr int MAX_PHOTONS = 10000;
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
 {

@@ -45,14 +45,14 @@ struct Camera
 	__host__ __device__ Camera()
 	{
 		proj = glm::mat4(1.0f);
-		position = glm::vec3(4.950867f, 26.793819f, 58.673916f);
+		position = glm::vec3(46.819603f, 26.943981f, 47.588127f);
 		fov = 70.0f;
 		nearPlane = 0.1f;
 		farPlane = 1000.0f;
 		moveSpeed = 25.0f;
 		mouseSpeed = 10.0f;
-		pitch = -24.790009;
-		yaw = 213.499847f;
+		pitch = 4.259992f;
+		yaw = 226.639847f;
 		view = mat4(0);
 		proj = mat4(0);
 		aperture = 0;
@@ -525,18 +525,23 @@ Camera* camera;
 
 Sphere spheres[] =
 {
-	Sphere(vec3(20, 10, 14), 8, Material(TRANS,  vec3(1))),
-	Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(1))),
-	Sphere(vec3(-14, 8, 14), 8, Material(SPEC,  vec3(1))),
-	Sphere(vec3(14, 8, -14), 8, Material(GLOSS,  vec3(1)))
+	//Sphere(vec3(20, 10, 14), 8, Material(TRANS,  vec3(1))),
+	//Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(1))),
+	//Sphere(vec3(-14, 8, 14), 8, Material(SPEC,  vec3(1))),
+	//Sphere(vec3(14, 8, -14), 8, Material(GLOSS,  vec3(1)))
 	//Sphere(vec3(0, 65, 0), 8, Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
 	//Sphere(vec3(0, 30, 0), 8,  Material(TRANS,  vec3(1)))
+
+	Sphere(vec3(-30, 8, 0), 8, Material(TRANS,  vec3(1))),
+	Sphere(vec3(-10, 8, 0), 8, Material(DIFF,  vec3(1))),
+	Sphere(vec3(10, 8, 0), 8, Material(SPEC,  vec3(1))),
+	Sphere(vec3(30, 8, -0), 8, Material(GLOSS,  vec3(1)))
 };
 Mesh meshes[] =
 {
 	//Mesh(vec3(0,0,0), "Cornell_Long.obj")
-	Mesh(vec3(0,0,0), "Cornell.obj")
-	//Mesh(vec3(0,0,0), "Board.obj")
+	//Mesh(vec3(0,0,0), "Cornell.obj")
+	Mesh(vec3(0,0,0), "Board.obj")
 	//CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
 	//Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF)),
 	//Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
@@ -1264,7 +1269,7 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, int fram
 	Photon* photonMap;
 	if (photon)
 	{
-		photonMapSize = 100000;
+		photonMapSize = MAX_PHOTONS;
 		photonMap = BuildPhotonMap(photonMapSize, frame);
 
 		gpuErrorCheck(cudaMalloc(&cudaPhotonMap, sizeof(Photon) * photonMapSize));
