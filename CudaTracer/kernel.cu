@@ -5,8 +5,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-#include <freeimage.h>
-
 #include "tiny_obj_loader.h"
 #include "kernel.cuh"
 #include "Input.h"
@@ -47,14 +45,14 @@ struct Camera
 	__host__ __device__ Camera()
 	{
 		proj = glm::mat4(1.0f);
-		position = glm::vec3(36.040195f, 48.419228f, -38.064163f);
+		position = glm::vec3(4.950867f, 26.793819f, 58.673916f);
 		fov = 70.0f;
 		nearPlane = 0.1f;
 		farPlane = 1000.0f;
 		moveSpeed = 25.0f;
 		mouseSpeed = 10.0f;
-		pitch = -47.0f;
-		yaw = 312.8f;
+		pitch = -24.790009;
+		yaw = 213.499847f;
 		view = mat4(0);
 		proj = mat4(0);
 		aperture = 0;
@@ -528,7 +526,7 @@ Camera* camera;
 Sphere spheres[] =
 {
 	Sphere(vec3(20, 10, 14), 8, Material(TRANS,  vec3(1))),
-	Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(0.75f, 0.75f, 0.75f))),
+	Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(1))),
 	Sphere(vec3(-14, 8, 14), 8, Material(SPEC,  vec3(1))),
 	Sphere(vec3(14, 8, -14), 8, Material(GLOSS,  vec3(1)))
 	//Sphere(vec3(0, 65, 0), 8, Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
@@ -538,6 +536,7 @@ Mesh meshes[] =
 {
 	//Mesh(vec3(0,0,0), "Cornell_Long.obj")
 	Mesh(vec3(0,0,0), "Cornell.obj")
+	//Mesh(vec3(0,0,0), "Board.obj")
 	//CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
 	//Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF)),
 	//Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
@@ -766,7 +765,27 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount
 	{
 		ObjectIntersection intersection = Intersect(ray, spheres, meshes, sphereCount, meshCount);
 
-		if (intersection.hit == 0) return resultColor * vec3(0.2f, 0.2f, 0.2f);
+		if (intersection.hit == 0)
+		{
+			float longlatX = atan2(ray.direction.x, ray.direction.z);
+			longlatX = longlatX < 0.f ? longlatX + two_pi<float>() : longlatX;
+			float longlatY = acos(-ray.direction.y);
+
+			float u = longlatX / two_pi<float>();
+			float v = longlatY / pi<float>();
+
+			int u2 = (int) (u * HDRWidth);
+			int v2 = (int) (v * HDRHeight);
+
+			int HDRtexelidx = u2 + v2 * HDRWidth;
+
+			float4 HDRcol = tex1Dfetch(HDRtexture, HDRtexelidx);
+			vec3 HDRcol2 = vec3(HDRcol.x, HDRcol.y, HDRcol.z);
+
+			return resultColor + (mask * HDRcol2);
+		}
+
+
 		vec3 position = ray.origin + ray.direction * intersection.t;
 		vec3 emission = intersection.material.emission;
 		vec3 photonColor = vec3(0, 0, 0);
@@ -1464,7 +1483,8 @@ void Display(void)
 			GLubyte *pixels = new GLubyte[3 * width*height];
 			glPixelStorei(GL_PACK_ALIGNMENT, 1);
 			glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels);
-			FIBITMAP* image = FreeImage_ConvertFromRawBits(pixels, width, height, 3 * width, 24, FI_RGBA_RED, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, false);
+			FIBITMAP* image = FreeImage_ConvertFromRawBits(pixels, width, height, 3 * width, 24, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, false);
+			SwapRedBlue32(image);
 			FreeImage_Save(FIF_PNG, image, "Result.png", 0);
 			FreeImage_Unload(image);
 			delete pixels;
@@ -1582,26 +1602,74 @@ int main(int argc, char **argv)
 	glDepthFunc(GL_LESS);
 
 	glClearColor(0.6, 0.65, 0.85, 0);
+	
+	FreeImage_Initialise();
 
 	// Init
-	camera = new Camera;
-	glEnable(GL_TEXTURE_2D);
-	glGenTextures(1, &viewGLTexture);
 
-	glBindTexture(GL_TEXTURE_2D, viewGLTexture);
 	{
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, WIDTH, HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
+		camera = new Camera;
 	}
-	glBindTexture(GL_TEXTURE_2D, 0);
 
-	cudaGraphicsGLRegisterImage(&viewResource, viewGLTexture, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsWriteDiscard);
+	{
+		glEnable(GL_TEXTURE_2D);
+		glGenTextures(1, &viewGLTexture);
+		glBindTexture(GL_TEXTURE_2D, viewGLTexture);
+		{
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, WIDTH, HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
+		}
+		glBindTexture(GL_TEXTURE_2D, 0);
+		cudaGraphicsGLRegisterImage(&viewResource, viewGLTexture, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsWriteDiscard);
+		cudaGraphicsMapResources(1, &viewResource);
+		cudaGraphicsSubResourceGetMappedArray(&viewArray, viewResource, 0, 0);
+	}
 
-	cudaGraphicsMapResources(1, &viewResource);
-	cudaGraphicsSubResourceGetMappedArray(&viewArray, viewResource, 0, 0);
+	{
+		FREE_IMAGE_FORMAT fif = FIF_HDR;
+		FIBITMAP *src(nullptr);
+		FIBITMAP *dst(nullptr);
+		BYTE* bits(nullptr);
+		float4* cpuHDRmap;
+
+		src = FreeImage_Load(fif, HDR_FILE_NAME);
+		dst = FreeImage_ToneMapping(src, FITMO_REINHARD05);
+		bits = FreeImage_GetBits(dst);
+		if (bits == nullptr)
+			return -1;
+
+		cpuHDRmap = new float4[HDRWidth * HDRHeight];
+
+		for (int x = 0; x < HDRWidth; x++)
+		{
+			for (int y = 0; y < HDRHeight; y++)
+			{
+				RGBQUAD rgbQuad;
+				FreeImage_GetPixelColor(dst, x, y, &rgbQuad);
+				cpuHDRmap[y*HDRWidth + x].x = rgbQuad.rgbRed / 256.0f;
+				cpuHDRmap[y*HDRWidth + x].y = rgbQuad.rgbGreen / 256.0f;
+				cpuHDRmap[y*HDRWidth + x].z = rgbQuad.rgbBlue / 256.0f;
+				cpuHDRmap[y*HDRWidth + x].w = 1.0f;
+			}
+		}
+
+		gpuErrorCheck(cudaMalloc(&cudaHDRmap, HDRWidth * HDRHeight * sizeof(float4)));
+		gpuErrorCheck(cudaMemcpy(cudaHDRmap, cpuHDRmap, HDRWidth * HDRHeight * sizeof(float4), cudaMemcpyHostToDevice));
+
+		HDRtexture.filterMode = cudaFilterModeLinear;
+		cudaChannelFormatDesc channel4desc = cudaCreateChannelDesc<float4>();
+		cudaBindTexture(NULL, &HDRtexture, cudaHDRmap, &channel4desc, HDRWidth * HDRHeight * sizeof(float4));
+
+		printf("Load HDR Map Success\n");
+		printf("Width : %d\nHeight : %d\n", HDRWidth, HDRHeight);
+
+		FreeImage_Unload(src);
+		FreeImage_Unload(dst);
+		delete cpuHDRmap;
+	}
 
 	glutKeyboardFunc(Keyboard);
 	glutKeyboardUpFunc(KeyboardUp);

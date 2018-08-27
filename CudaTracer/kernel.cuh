@@ -10,6 +10,8 @@
 #include "curand_kernel.h"
 #include "device_launch_parameters.h"
 
+#include <freeimage.h>
+
 #define gpuErrorCheck(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 
 constexpr int WIDTH = 1280;
@@ -39,6 +41,14 @@ bool cudaToggle = true;
 bool cudaDirty = false;
 int frame = 1;
 
+// HDR Texture
+constexpr char* HDR_FILE_NAME = "reading_room_4k.hdr";
+constexpr int HDRWidth = 4096;
+constexpr int HDRHeight = 2048;
+texture<float4, 1, cudaReadModeElementType> HDRtexture;
+float4* cudaHDRmap;
+
+
 // Rendering
 bool enableDof = false;
 bool enablePhoton = false;
@@ -61,6 +71,35 @@ __device__ unsigned int WangHash(unsigned int a)
 	a = a * 0x27d4eb2d;
 	a = a ^ (a >> 15);
 	return a;
+}
+
+BOOL SwapRedBlue32(FIBITMAP* dib)
+{
+	if (FreeImage_GetImageType(dib) != FIT_BITMAP)
+	{
+		return FALSE;
+	}
+
+	const unsigned bytesperpixel = FreeImage_GetBPP(dib) / 8;
+	if (bytesperpixel > 4 || bytesperpixel < 3)
+	{
+		return FALSE;
+	}
+
+	const unsigned height = FreeImage_GetHeight(dib);
+	const unsigned pitch = FreeImage_GetPitch(dib);
+	const unsigned lineSize = FreeImage_GetLine(dib);
+
+	BYTE* line = FreeImage_GetBits(dib);
+	for (unsigned y = 0; y < height; ++y, line += pitch)
+	{
+		for (BYTE* pixel = line; pixel < line + lineSize; pixel += bytesperpixel)
+		{
+			std::swap(pixel[0], pixel[2]);
+		}
+	}
+
+	return TRUE;
 }
 
 #endif
