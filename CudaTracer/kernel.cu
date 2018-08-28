@@ -258,11 +258,11 @@ struct Triangle
 
 		vec3 tvec = ray.origin - pos[0];
 		u = dot(tvec, pvec);
-		if (u < EPSILON || u > det) return ObjectIntersection(hit, t, normal, material);
+		if (u < 0 || u > det) return ObjectIntersection(hit, t, normal, material);
 
 		vec3 qvec = cross(tvec, v0v1);
 		v = dot(ray.direction, qvec);
-		if (v < EPSILON || u + v > det) return ObjectIntersection(hit, t, normal, material);
+		if (v < 0 || u + v > det) return ObjectIntersection(hit, t, normal, material);
 
 		t = dot(v0v2, qvec) / det;
 
@@ -422,7 +422,7 @@ __global__ void MidSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 	if (volume.x >= volume.y && volume.x >= volume.z)// split x
 	{
 		nodes[id].splitAxis = 0;
-		sp = nodes[id].nodeAABB.bounds[0].x + volume.x / 2;
+		sp = nodes[id].nodeAABB.bounds[0].x + volume.x / 2.0f;
 		nodes[id].splitPos = sp;
 
 		KDTreeNode atarashiiNode;
@@ -439,7 +439,7 @@ __global__ void MidSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 	else if (volume.y >= volume.x && volume.y >= volume.z)// split y
 	{
 		nodes[id].splitAxis = 1;
-		sp = nodes[id].nodeAABB.bounds[0].y + volume.y / 2;
+		sp = nodes[id].nodeAABB.bounds[0].y + volume.y / 2.0f;
 		nodes[id].splitPos = sp;
 
 		KDTreeNode atarashiiNode;
@@ -456,7 +456,7 @@ __global__ void MidSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 	else // split z
 	{
 		nodes[id].splitAxis = 2;
-		sp = nodes[id].nodeAABB.bounds[0].z + volume.z / 2;
+		sp = nodes[id].nodeAABB.bounds[0].z + volume.z / 2.0f;
 		nodes[id].splitPos = sp;
 
 		KDTreeNode atarashiiNode;
@@ -487,7 +487,6 @@ __global__ void MidSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 		case 0:
 			if (aabb[triid].bounds[0].x <= sp) {
 				tnapos = DeviceVector<int>::push_back(tna, tnaPtr, triid);
-				//DeviceVector<int>::push_back(tnahelper, tnahelperPtr, leftid);
 				tnahelper[tnapos - tnaStartPtr] = leftid;
 				leftcount++;
 			}
@@ -940,9 +939,9 @@ struct KDTree
 		MidSplit();
 		SAHSplit();
 
-		//cout << "gpu kdtree debug info:" << endl;
-		//cout << nodes.size() << endl;
-		//cout << triangleNodeAssociation.size() << endl;
+		cout << "gpu kdtree debug info:" << endl;
+		cout << nodes.size() << endl;
+		cout << triangleNodeAssociation.size() << endl;
 	}
 
 	AABB rootAABB;
@@ -1215,11 +1214,12 @@ struct Mesh
 	vec3 position;
 	Triangle* triangles;
 	int count;
+	KDTree* tree;
 	KDTreeNode* nodes;	
 	int* tna;
 	__device__ ObjectIntersection Intersect(Ray ray)
 	{
-#if !ENABLE_KDTREE
+#if ENABLE_KDTREE
 		ObjectIntersection intersection = ObjectIntersection();
 		intersection = RayKDTreeTraversal(nodes, tna, ray, triangles, position);
 		return intersection;
@@ -1519,7 +1519,7 @@ Mesh meshes[] =
 			for (int i = 0; i < maxPhotons; i++)
 			{
 				float dist = distance(position, map[i].position);
-				if (dist <= 5.0f && dot(intersection.normal, map[i].normal) > EPSILON)
+				if (dist <= 5.0f && dot(intersection.normal, map[i].normal) > 0)
 				{
 					photonColor += map[i].power * 1.0f / (pi<float>() * dist);
 					nearPhotonCount++;
@@ -1680,40 +1680,6 @@ Mesh meshes[] =
 		cudaEventDestroy(stop);
 		printf("Building Photon Map End | Memory Allocation Time : %f ms | Building time : %f ms\n", memoryAllocTime, renderingTime);
 
-		{
-			//int width = camera->width;
-		//int height = camera->height;
-		//vec3* deviceImage;
-		//gpuErrorCheck(cudaMalloc(&deviceImage, width * height * sizeof(vec3)));
-
-		//gpuErrorCheck(cudaMemcpy(cudaDebugPhotonMap, cudaPhotonMap, sizeof(Photon) * maxPhotons, cudaMemcpyDeviceToDevice));
-		//block = dim3(16, 9);
-		//grid.x = ceil(width / block.x);
-		//grid.y = ceil(height / block.y);
-
-		//cudaEventCreate(&start);
-		//cudaEventRecord(start, 0);
-		//DebugPhotonMapKernel<<<grid, block>>>(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, cudaDebugPhotonMap, maxPhotons, deviceImage);
-		//gpuErrorCheck(cudaDeviceSynchronize());
-		//cudaEventCreate(&stop);
-		//cudaEventRecord(stop, 0);
-		//cudaEventSynchronize(stop);
-		//cudaEventElapsedTime(&renderingTime, start, stop);
-		//cudaEventDestroy(start);
-		//cudaEventDestroy(stop);
-		//printf("Calculate Debug Photon Map Finished : %f ms\n", renderingTime);
-
-		//vec3* hostImage = new vec3[width * height];
-		//gpuErrorCheck(cudaMemcpy(hostImage, deviceImage, width * height * sizeof(vec3), cudaMemcpyDeviceToHost));
-		//SaveImage("Result_PhotonMap.png", width, height, hostImage);
-		////photons = new Photon[maxPhotons];
-		////gpuErrorCheck(cudaMemcpy(photons, cudaDebugPhotonMap, sizeof(Photon) * maxPhotons, cudaMemcpyDeviceToHost));
-
-		//cudaFree(deviceImage);
-		//delete hostImage;
-		//cudaFree(cudaDebugPhotonMap);
-		}
-
 		photons = new Photon[maxPhotons];
 		gpuErrorCheck(cudaMemcpy(photons, cudaPhotonMap, sizeof(Photon) * maxPhotons, cudaMemcpyDeviceToHost));
 
@@ -1756,7 +1722,6 @@ Mesh meshes[] =
 		Mesh* cudaMeshes;
 		std::vector<Mesh> meshVector;
 		std::vector<Triangle*> triangleVector;
-		std::vector<KDTree*> treeVector;
 		for (int i = 0; i < meshCount; i++)
 		{
 			Mesh currentMesh = meshes[i];
@@ -1765,16 +1730,11 @@ Mesh meshes[] =
 			gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
 			gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
 
-			KDTree* tree;
-
-			tree = new KDTree(currentMesh.triangles, currentMesh.count, AABB(vec3(-INF), vec3(INF)));
-			tree->Build();
-			cudaMesh.nodes = tree->nodes.data;
-			cudaMesh.tna = tree->triangleNodeAssociation.data;
+			cudaMesh.nodes = currentMesh.tree->nodes.data;
+			cudaMesh.tna = currentMesh.tree->triangleNodeAssociation.data;
 			cudaMesh.triangles = cudaTriangles;
 			meshVector.push_back(cudaMesh);
 			triangleVector.push_back(cudaTriangles);
-			treeVector.push_back(tree);
 		}
 
 		gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshCount));
@@ -1826,10 +1786,6 @@ Mesh meshes[] =
 		for (auto & triangle : triangleVector)
 		{
 			gpuErrorCheck(cudaFree(triangle));
-		}
-		for (auto & tree : treeVector)
-		{
-			delete tree;
 		}
 		gpuErrorCheck(cudaFree(cudaMeshes));
 	}
@@ -1922,7 +1878,7 @@ Mesh meshes[] =
 	}
 	void MouseWheel(int button, int dir, int x, int y)
 	{
-		if (dir > EPSILON)
+		if (dir > 0)
 		{
 			camera->fov++;
 			cudaDirty = true;
@@ -2197,6 +2153,11 @@ int main(int argc, char **argv)
 		FreeImage_Unload(src);
 		FreeImage_Unload(dst);
 		delete cpuHDRmap;
+	}
+
+	{
+		meshes[0].tree = new KDTree(meshes[0].triangles, meshes[0].count, AABB(vec3(-INF), vec3(INF)));
+		meshes[0].tree->Build();
 	}
 
 	glutKeyboardFunc(Keyboard);
