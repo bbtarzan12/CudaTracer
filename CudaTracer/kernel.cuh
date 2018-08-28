@@ -124,9 +124,9 @@ class DeviceStack {
 public:
 	__device__  DeviceStack() {
 		ptr = 0;
-		//cudaMalloc((void**)&data, sizeof(T)*GPUKDTREEMAXSTACK);
+		//gpuErrorCheck(cudaMalloc((void**)&data, sizeof(T)*GPUKDTREEMAXSTACK));
 	}
-	__device__  ~DeviceStack() {}//cudaFree(data);}
+	__device__  ~DeviceStack() {}//gpuErrorCheck(cudaFree(data);}
 	__inline__ __device__  void push(const T& t) { data[ptr++] = t; if (ptr > KDTREE_MAX_STACK)printf("stack over flow!"); }
 	__inline__ __device__  T pop() { return data[--ptr]; }
 	__inline__ __device__  bool empty() { return ptr <= 0; }
@@ -140,26 +140,26 @@ class DeviceVector {
 public:
 	DeviceVector() {}
 	~DeviceVector() {
-		cudaFree(data);
-		cudaFree(d_size);
-		cudaFree(d_ptr);
+		gpuErrorCheck(cudaFree(data));
+		gpuErrorCheck(cudaFree(d_size));
+		gpuErrorCheck(cudaFree(d_ptr));
 	}
 	void allocateMemory(unsigned int n) {
 		h_size = n;
 		h_ptr = 0;
-		cudaMalloc((void**)&d_size, sizeof(unsigned int));
-		cudaMalloc((void**)&d_ptr, sizeof(unsigned int));
-		cudaMemcpy(d_size, &h_size, sizeof(unsigned int), cudaMemcpyHostToDevice);
-		cudaMemcpy(d_ptr, &h_ptr, sizeof(unsigned int), cudaMemcpyHostToDevice);
-		cudaMalloc((void**)&data, sizeof(T)*n);
+		gpuErrorCheck(cudaMalloc((void**)&d_size, sizeof(unsigned int)));
+		gpuErrorCheck(cudaMalloc((void**)&d_ptr, sizeof(unsigned int)));
+		gpuErrorCheck(cudaMemcpy(d_size, &h_size, sizeof(unsigned int), cudaMemcpyHostToDevice));
+		gpuErrorCheck(cudaMemcpy(d_ptr, &h_ptr, sizeof(unsigned int), cudaMemcpyHostToDevice));
+		gpuErrorCheck(cudaMalloc((void**)&data, sizeof(T)*n));
 		thrustPtr = thrust::device_ptr<T>(data);
 	}
 	void CopyToHost(T* dist) {
-		cudaMemcpy(&h_ptr, d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToHost);
-		cudaMemcpy(dist, data, sizeof(T)*h_ptr, cudaMemcpyDeviceToHost);
+		gpuErrorCheck(cudaMemcpy(&h_ptr, d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToHost));
+		gpuErrorCheck(cudaMemcpy(dist, data, sizeof(T)*h_ptr, cudaMemcpyDeviceToHost));
 	}
 	unsigned int size() {
-		cudaMemcpy(&h_ptr, d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToHost);
+		gpuErrorCheck(cudaMemcpy(&h_ptr, d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToHost));
 		return h_ptr;
 	}
 
@@ -178,14 +178,14 @@ public:
 		return false;
 	}
 	__host__ bool h_empty() {
-		cudaMemcpy(&h_ptr, d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToHost);
+		gpuErrorCheck(cudaMemcpy(&h_ptr, d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToHost));
 		if (h_ptr <= 0)
 			return true;
 		return false;
 	}
 	__host__ void h_clear() {
 		h_ptr = 0;
-		cudaMemcpy(d_ptr, &h_ptr, sizeof(unsigned int), cudaMemcpyHostToDevice);
+		gpuErrorCheck(cudaMemcpy(d_ptr, &h_ptr, sizeof(unsigned int), cudaMemcpyHostToDevice));
 	}
 	__inline__ __device__ static void clear(unsigned int* ptr) {
 		*ptr = 0;

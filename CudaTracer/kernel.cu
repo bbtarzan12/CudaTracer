@@ -246,7 +246,6 @@ struct Triangle
 	{
 		bool hit = false;
 		float u, v, t = 0;
-
 		vec3 pos[3] = { this->pos[0] + position, this->pos[1] + position, this->pos[2] + position };
 
 		vec3 normal = normalize(cross(pos[1] - pos[0], pos[2] - pos[0]));
@@ -314,235 +313,20 @@ struct Sphere
 	}
 };
 
-struct Mesh
-{
-	__host__ __device__ Mesh() {}
-	__host__  Mesh(vec3 position, const char* fileName = "", Material material = Material())
-	{
-		this->position = position;
-
-		std::string mtlBasePath;
-		std::string inputFile = fileName;
-		unsigned long pos = inputFile.find_last_of("/");
-		mtlBasePath = inputFile.substr(0, pos + 1);
-
-
-		std::vector<tinyobj::shape_t> obj_shapes;
-		std::vector<tinyobj::material_t> obj_materials;
-		std::vector<Material> materials;
-
-		printf("Loading %s...\n", fileName);
-		std::string err = tinyobj::LoadObj(obj_shapes, obj_materials, inputFile.c_str(), mtlBasePath.c_str());
-
-		if (!err.empty())
-			std::cerr << err << std::endl;
-
-		for (auto & obj_material : obj_materials)
-		{
-			std::string texturePath = "";
-
-			vec3 diffuseColor = vec3(obj_material.diffuse[0], obj_material.diffuse[1], obj_material.diffuse[2]);
-			vec3 emissionColor = vec3(obj_material.emission[0], obj_material.emission[1], obj_material.emission[2]);
-
-			if (!obj_material.diffuse_texname.empty())
-			{
-				if (obj_material.diffuse_texname[0] == '/') texturePath = obj_material.diffuse_texname;
-				texturePath = mtlBasePath + obj_material.diffuse_texname;
-				materials.push_back(Material(material.type, diffuseColor, emissionColor));
-			}
-			else
-			{
-				materials.push_back(Material(material.type, diffuseColor, emissionColor));
-			}
-		}
-
-		long shapeSize, indicesSize;
-		shapeSize = obj_shapes.size();
-		std::vector<Triangle>* triangles = new std::vector<Triangle>;
-
-		for (int i = 0; i < shapeSize; i++)
-		{
-			indicesSize = obj_shapes[i].mesh.indices.size() / 3;
-			for (size_t f = 0; f < indicesSize; f++)
-			{
-
-				vec3 v0_ = vec3(
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3 + 1],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3 + 2]
-				);
-
-				vec3 v1_ = vec3(
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3 + 1],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3 + 2]
-				);
-
-				vec3 v2_ = vec3(
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3 + 1],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3 + 2]
-				);
-
-				vec3 t0_, t1_, t2_;
-
-				if (obj_shapes[i].mesh.indices[3 * f + 2] * 2 + 1 < obj_shapes[i].mesh.texcoords.size())
-				{
-					t0_ = vec3(
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f] * 2],
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f] * 2 + 1],
-						0
-					);
-
-					t1_ = vec3(
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 1] * 2],
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 1] * 2 + 1],
-						0
-					);
-
-					t2_ = vec3(
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 2] * 2],
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 2] * 2 + 1],
-						0
-					);
-				}
-				else
-				{
-					t0_ = vec3(0, 0, 0);
-					t1_ = vec3(0, 0, 0);
-					t2_ = vec3(0, 0, 0);
-				}
-
-				Triangle triangle;
-				if (obj_shapes[i].mesh.material_ids[f] < materials.size())
-				{
-					//triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, materials[obj_shapes[i].mesh.material_ids[f]]);
-					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, material);
-				}
-				else
-				{
-					//triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, Material());
-					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, material);
-				}
-				triangles->push_back(triangle);
-			}
-		}
-		this->count = triangles->size();
-		this->triangles = triangles->data();
-	}
-	__host__  Mesh(vec3 position, Triangle* triangles = nullptr, int count = 0, Material material = Material())
-	{
-		this->position = position;
-		this->triangles = new Triangle[count];
-		this->count = count;
-		for (int i = 0; i < count; i++)
-		{
-			this->triangles[i] = triangles[i];
-			this->triangles[i].material = material;
-		}
-	}
-	vec3 position;
-	Triangle* triangles;
-	int count;
-
-	__device__ ObjectIntersection Intersect(Ray ray)
-	{
-		float tNear = INFINITY;
-		ObjectIntersection intersection = ObjectIntersection();
-		for (int i = 0; i < count; i++)
-		{
-			ObjectIntersection temp = triangles[i].Intersect(ray, position);
-			if (temp.hit && temp.t < tNear)
-			{
-				tNear = temp.t;
-				intersection = temp;
-			}
-		}
-		return intersection;
-	}
-
-
-};
-
-#pragma endregion Structs
-
-#pragma region Scene
-
-Mesh CreateBox(vec3 pos, vec3 halfExtents, Material material)
-{
-	float halfWidth = halfExtents[0];
-	float halfHeight = halfExtents[1];
-	float halfDepth = halfExtents[2];
-
-	vec3 vertices[8] =
-	{
-		vec3(halfWidth, halfHeight, halfDepth),
-		vec3(-halfWidth, halfHeight, halfDepth),
-		vec3(halfWidth, -halfHeight, halfDepth),
-		vec3(-halfWidth, -halfHeight, halfDepth),
-		vec3(halfWidth, halfHeight, -halfDepth),
-		vec3(-halfWidth, halfHeight, -halfDepth),
-		vec3(halfWidth, -halfHeight, -halfDepth),
-		vec3(-halfWidth, -halfHeight, -halfDepth)
-	};
-
-	static int indices[36] =
-	{
-		0, 1, 2, 3, 2, 1, 4, 0, 6,
-		6, 0, 2, 5, 1, 4, 4, 1, 0,
-		7, 3, 1, 7, 1, 5, 5, 4, 7,
-		7, 4, 6, 7, 2, 3, 7, 6, 2
-	};
-
-	std::vector<Triangle> triangles;
-
-	for (int i = 0; i < 36; i += 3)
-	{
-		triangles.push_back(Triangle(vertices[indices[i]], vertices[indices[i + 1]], vertices[indices[i + 2]], material));
-	}
-
-	return Mesh(pos, triangles.data(), 12, material);
-}
-
-dim3 block, grid;
-Camera* camera;
-
-Sphere spheres[] =
-{
-	//Sphere(vec3(20, 10, 14), 8, Material(TRANS,  vec3(1))),
-	//Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(1))),
-	//Sphere(vec3(-14, 8, 14), 8, Material(SPEC,  vec3(1))),
-	//Sphere(vec3(14, 8, -14), 8, Material(GLOSS,  vec3(1)))
-	//Sphere(vec3(0, 65, 0), 8, Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
-	//Sphere(vec3(0, 30, 0), 8,  Material(TRANS,  vec3(1)))
-
-	Sphere(vec3(-30, 8, 0), 8, Material(TRANS,  vec3(1))),
-	Sphere(vec3(-10, 8, 0), 8, Material(DIFF,  vec3(1))),
-	Sphere(vec3(10, 8, 0), 8, Material(SPEC,  vec3(1))),
-	Sphere(vec3(30, 8, -0), 8, Material(GLOSS,  vec3(1)))
-};
-Mesh meshes[] =
-{
-	//Mesh(vec3(0,0,0), "Cornell_Long.obj")
-	//Mesh(vec3(0,0,0), "Cornell.obj")
-	//Mesh(vec3(0,0,0), "Board.obj")
-	Mesh(vec3(0,0,0), "0250.obj", Material(TRANS, vec3(1)))
-	//CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
-	//Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF)),
-	//Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
-	////CreateBox(vec3(0, 0, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75))),
-	//CreateBox(vec3(30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.0, 0.0, 0.75))),
-	//CreateBox(vec3(-30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.75, 0.0, 0.0))),
-	//CreateBox(vec3(0, 15, 30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75))),
-	//CreateBox(vec3(0, 15, -30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75)))
-};
-
-#pragma endregion Scene
-
 #pragma region KDTree
 
 struct AABB
 {
+	__device__ __host__ AABB()
+	{
+		bounds[0] = vec3(0);
+		bounds[1] = vec3(1);
+	}
+	__device__ __host__ AABB(vec3 min, vec3 max)
+	{
+		bounds[0] = min;
+		bounds[1] = max;
+	}
 	vec3 bounds[2];
 };
 struct KDTreeNode
@@ -633,7 +417,7 @@ __global__ void MidSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 	int leftid;
 	int rightid;
 	float sp;
-	//gpukdtreeNode currentNode(nodes[id]);
+	//KDTreeNode currentNode(nodes[id]);
 	vec3 volume = nodes[id].nodeAABB.bounds[1] - nodes[id].nodeAABB.bounds[0];
 	if (volume.x >= volume.y && volume.x >= volume.z)// split x
 	{
@@ -686,7 +470,6 @@ __global__ void MidSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 		rightid = DeviceVector<KDTreeNode>::push_back(nodes, nodesPtr, atarashiiNode);
 		nodes[id].rightChild = rightid;
 	}
-	//printf("sp=%.3f\n",sp);
 	// split triangles
 	int leftcount = 0;
 	int rightcount = 0;
@@ -765,7 +548,7 @@ __global__ void SAHSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 	int leftid;
 	int rightid;
 	float tpos;
-	//gpukdtreeNode currentNode(nodes[id]);
+	//KDTreeNode currentNode(nodes[id]);
 	vec3 volume = nodes[id].nodeAABB.bounds[1] - nodes[id].nodeAABB.bounds[0];
 	if (volume.x >= volume.y && volume.x >= volume.z)// split x
 	{
@@ -951,139 +734,151 @@ __global__ void CalculateTriangleIndex(int start, int end, int base, KDTreeNode*
 		count += nodes[i].triangleNumber;
 	}
 }
-__device__ bool Intersect_nodeAABB_Ray(const Ray& r, int id, KDTreeNode* nodes)
+__device__ float KDRayTraversal(KDTreeNode* root, Ray ray, float& minDist, float& distance, vec3 position)
 {
-	bool intersection = true;
-	float p_near_result = -FLT_MAX;
-	float p_far_result = FLT_MAX;
-	float p_near_comp, p_far_comp;
-	AABB aabb(nodes[id].nodeAABB);
-
-	vec3 inv_dir(1.0 / r.direction.x, 1.0 / r.direction.y, 1.0 / r.direction.z);
-
-	for (int i = 0; i < 3; i++)
-	{
-		switch (i)
-		{
-		case 0:
-			p_near_comp = (aabb.bounds[0].x - r.origin.x) * inv_dir.x;
-			p_far_comp = (aabb.bounds[1].x - r.origin.x) * inv_dir.x;
-			break;
-		case 1:
-			p_near_comp = (aabb.bounds[0].y - r.origin.y) * inv_dir.y;
-			p_far_comp = (aabb.bounds[1].y - r.origin.y) * inv_dir.y;
-			break;
-		case 2:
-			p_near_comp = (aabb.bounds[0].z - r.origin.z) * inv_dir.z;
-			p_far_comp = (aabb.bounds[1].z - r.origin.z) * inv_dir.z;
-			break;
-		}
-
-		if (p_near_comp > p_far_comp) {
-			float temp = p_near_comp;
-			p_near_comp = p_far_comp;
-			p_far_comp = temp;
-		}
-
-		p_near_result = ((p_near_comp > p_near_result) ? p_near_comp : p_near_result);
-		p_far_result = ((p_far_comp < p_far_result) ? p_far_comp : p_far_result);
-
-		if (p_near_result > p_far_result)
-			intersection = false;
-	}
-
-	return intersection;
-}
-__device__ __host__ bool intersect_triangle(Ray ray, Triangle triangle, float& dist)
-{
-	glm::vec3 v0v1 = triangle.pos[1] - triangle.pos[0];
-	glm::vec3 v0v2 = triangle.pos[2] - triangle.pos[0];
-	glm::vec3 pvec = glm::cross(ray.direction, v0v2);
-
-	float det = dot(v0v1, pvec);
-
-	// back face culling
-	if (det < 0.001f)
-		return false;
-
-	/*if (fabsf(det) < 0.01f)
-	return false;*/
-
-	float invDet = 1 / det;
-
-	glm::vec3 tvec = ray.origin - triangle.pos[0];
-	float u = glm::dot(tvec, pvec) * invDet;
-	if (u < 0 || u > 1)
-		return false;
-
-	glm::vec3 qvec = cross(tvec, v0v1);
-	float v = dot(ray.direction, qvec) * invDet;
-	if (v < 0 || u + v > 1)
-		return false;
-
-	dist = dot(v0v2, qvec) * invDet;
-
-	return dist > 0.001f;
-}
-__device__ bool Intersect_nodeTriangles_Ray(const Ray& r, int id, float& dist, int& iid, KDTreeNode* nodes, Triangle* tri, int* tna)
-{
-	bool intersection = false;
-	float cdist;
-	float mindist = INF;
-	int n = nodes[id].triangleIndex + nodes[id].triangleNumber - 1;
-
-	for (int i = nodes[id].triangleIndex; i <= n; i++)
-	{
-		if (intersect_triangle(r, tri[tna[i]], cdist)) {
-			if (cdist < mindist) {
-				mindist = cdist;
-				iid = tna[i];
-				intersection = true;
-			}
-		}
-	}
-	dist = mindist;
-	return intersection;
-}
-__global__ void IntersectRay(const Ray* ray, int n, float* dist, int* iid, KDTreeNode* nodes, Triangle* tri, int* tna)
-{
-	unsigned int tid = blockDim.x*blockIdx.x + threadIdx.x;
-	if (tid >= n)
+	if (root->triangleNumber <= 0)
 		return;
-	float mindist = INF;
-	float cdist;
-	int currentid, leftid, rightid, cid;
-	Ray r = ray[tid];
-	iid[tid] = -1;
 
+	vec3 minBox = root->nodeAABB.bounds[0] + position;
+	vec3 maxBox = root->nodeAABB.bounds[1] + position;
+
+	if (ray.direction.x < 0)
+	{
+		ray.origin.x = minBox.x + maxBox.x - ray.origin.x;
+		ray.direction.x = -ray.direction.x;
+	}
+	if (ray.direction.y < 0)
+	{
+		ray.origin.y = minBox.y + maxBox.y - ray.origin.y;
+		ray.direction.y = -ray.direction.y;
+	}
+	if (ray.direction.z < 0)
+	{
+		ray.origin.z = minBox.z + maxBox.z - ray.origin.z;
+		ray.direction.z = -ray.direction.z;
+	}
+
+	double divx = 1 / ray.direction.x;
+	double divy = 1 / ray.direction.y;
+	double divz = 1 / ray.direction.z;
+
+	double tx0 = (minBox.x - ray.origin.x) * divx;
+	double tx1 = (maxBox.x - ray.origin.x) * divx;
+	double ty0 = (minBox.y - ray.origin.y) * divy;
+	double ty1 = (maxBox.y - ray.origin.y) * divy;
+	double tz0 = (minBox.z - ray.origin.z) * divz;
+	double tz1 = (maxBox.z - ray.origin.z) * divz;
+
+	float tmin = max(max(tx0, ty0), tz0);
+	float tmax = min(min(tx1, ty1), tz1);
+
+	if (tmin <= tmax)
+	{
+		if (tmin < minDist)
+		{
+			distance = tmin;
+			return true;
+		}
+		else
+			return false;
+	}
+	else
+		return false;
+
+}
+__device__ ObjectIntersection RayKDTreeTraversal(KDTreeNode* nodes, int* tna, Ray ray, Triangle* triangles, vec3 position)
+{
+	int currentid = 0, leftid = 0, rightid = 0, cid = 0;
+	bool isHit = false;
+	float minDist = INF;
+	vec3 normal = vec3(0);
+	Material material;
 	DeviceStack<int> treestack;
 	treestack.push(0);
+
+	float distance = -1.0f;
+	vec3 point;
+
 	while (!treestack.empty())
 	{
 		currentid = treestack.pop();
 
 		//test node intersection
-		if (Intersect_nodeAABB_Ray(r, currentid, nodes)) {
+		if (KDRayTraversal(&nodes[currentid], ray, minDist, distance, position))
+		{
 			leftid = nodes[currentid].leftChild;
 			rightid = nodes[currentid].rightChild;
-			// leaf node
-			if (leftid == -1 && rightid == -1) {
-				if (Intersect_nodeTriangles_Ray(r, currentid, cdist, cid, nodes, tri, tna)) {
-					if (cdist < mindist) {
-						mindist = cdist;
-						iid[tid] = cid;
+
+			//// leaf node
+			if (leftid == -1)
+			{
+				for (int i = nodes[currentid].triangleIndex; i < nodes[currentid].triangleIndex + nodes[currentid].triangleNumber; i++)
+				{
+					ObjectIntersection intersection = triangles[tna[i]].Intersect(ray, position);
+					if (intersection.hit && intersection.t < minDist)
+					{
+						minDist = intersection.t;
+						isHit = true;
+						normal = intersection.normal;
+						material = intersection.material;
 					}
 				}
+
 				continue;
 			}
+
+
 			// middle node
 			if (leftid != -1)
-				treestack.push(leftid);
-			if (rightid != -1)
-				treestack.push(rightid);
+			{
+				point = ray.origin + ray.direction * distance;
+
+				if (nodes[currentid].splitAxis == 0)
+				{
+					if (point.x < nodes[currentid].nodeAABB.bounds[0].x + nodes[currentid].splitPos)
+					{
+						treestack.push(leftid);
+						treestack.push(rightid);
+					}
+					else
+					{
+						treestack.push(rightid);
+						treestack.push(leftid);
+					}
+
+				}
+				else if (nodes[currentid].splitAxis == 1)
+				{
+					if (point.y < nodes[currentid].nodeAABB.bounds[0].y + nodes[currentid].splitPos)
+					{
+						treestack.push(leftid);
+						treestack.push(rightid);
+					}
+					else
+					{
+						treestack.push(rightid);
+						treestack.push(leftid);
+					}
+
+				}
+				else if (nodes[currentid].splitAxis == 2)
+				{
+					if (point.z < nodes[currentid].nodeAABB.bounds[0].z + nodes[currentid].splitPos)
+					{
+						treestack.push(leftid);
+						treestack.push(rightid);
+					}
+					else
+					{
+						treestack.push(rightid);
+						treestack.push(leftid);
+					}
+
+				}
+			}
 		}
 	}
-	dist[tid] = mindist;
+	return ObjectIntersection(isHit, minDist, normal, material);
 }
 
 struct MaxX
@@ -1124,6 +919,7 @@ struct MinZ
 };
 struct KDTree
 {
+	KDTree(){}
 	KDTree(Triangle* tri, int n, AABB rootaabb)
 	{
 		h_Triangles = tri;
@@ -1133,7 +929,6 @@ struct KDTree
 	~KDTree() { freeMemory(); }
 	void Build()
 	{
-		cudaError_t err = cudaSuccess;
 		int blocksize = (nTriangle + 255) / 256;
 
 		allocateMemory();
@@ -1141,31 +936,13 @@ struct KDTree
 		cout << "memcpy on gpu" << endl;
 		// calculate AABB
 		CreateAABB << <blocksize, 256 >> > (nTriangle, d_Triangles, d_AABB);
-		cudaThreadSynchronize();
 
 		MidSplit();
 		SAHSplit();
-		err = cudaGetLastError();
-		if (err != cudaSuccess)cout << cudaGetErrorString(err) << endl;
-	}
-	void Intersect(const Ray* r, int n, float* dist, int* iid)
-	{
-		Ray* d_r;
-		float* d_dist;
-		int* d_iid;
-		cudaMalloc((void**)&d_r, sizeof(Ray)*n);
-		cudaMalloc((void**)&d_dist, sizeof(float)*n);
-		cudaMalloc((void**)&d_iid, sizeof(int)*n);
-		cudaMemcpy(d_r, r, sizeof(Ray)*n, cudaMemcpyHostToDevice);
-		cudaMemcpy(d_dist, dist, sizeof(float)*n, cudaMemcpyHostToDevice);
-		cudaMemcpy(d_iid, iid, sizeof(int)*n, cudaMemcpyHostToDevice);
-		IntersectRay << <(n + 255) / 256, 256 >> > (d_r, n, d_dist, d_iid, nodes.data, d_Triangles, triangleNodeAssociation.data);
-		cudaDeviceSynchronize();
-		cudaMemcpy(dist, d_dist, sizeof(float)*n, cudaMemcpyDeviceToHost);
-		cudaMemcpy(iid, d_iid, sizeof(int)*n, cudaMemcpyDeviceToHost);
-		cudaFree(d_r);
-		cudaFree(d_dist);
-		cudaFree(d_iid);
+
+		//cout << "gpu kdtree debug info:" << endl;
+		//cout << nodes.size() << endl;
+		//cout << triangleNodeAssociation.size() << endl;
 	}
 
 	AABB rootAABB;
@@ -1184,10 +961,10 @@ struct KDTree
 private:
 	void allocateMemory()
 	{
-		cudaMalloc((void**)&d_Triangles, sizeof(Triangle)*nTriangle);
-		cudaMalloc((void**)&d_AABB, sizeof(AABB)*nTriangle);
-		cudaMemcpy(d_Triangles, h_Triangles, sizeof(Triangle)*nTriangle, cudaMemcpyHostToDevice);
-
+		gpuErrorCheck(cudaMalloc((void**)&d_Triangles, sizeof(Triangle)*nTriangle));
+		gpuErrorCheck(cudaMalloc((void**)&d_AABB, sizeof(AABB)*nTriangle));
+		gpuErrorCheck(cudaMemcpy(d_Triangles, h_Triangles, sizeof(Triangle)*nTriangle, cudaMemcpyHostToDevice));
+		
 		nodes.allocateMemory(nTriangle / 3);
 		triangleNodeAssociation.allocateMemory(nTriangle * 30);
 		triangleNodeAssociationHelper.allocateMemory(nTriangle * 10);
@@ -1197,8 +974,9 @@ private:
 	}
 	void freeMemory()
 	{
-		cudaFree(d_Triangles);
-		cudaFree(d_AABB);
+		printf("KD Tree Free\n");
+		gpuErrorCheck(cudaFree(d_Triangles));
+		gpuErrorCheck(cudaFree(d_AABB));
 	}
 	AABB CalculateRootAABB()
 	{
@@ -1209,7 +987,7 @@ private:
 		float minx = thrust::transform_reduce(thrustPtr, thrustPtr + nTriangle, MinX(), 0, thrust::minimum<float>());
 		float miny = thrust::transform_reduce(thrustPtr, thrustPtr + nTriangle, MinY(), 0, thrust::minimum<float>());
 		float minz = thrust::transform_reduce(thrustPtr, thrustPtr + nTriangle, MinZ(), 0, thrust::minimum<float>());
-		cudaDeviceSynchronize();
+		gpuErrorCheck(cudaDeviceSynchronize());
 
 		AABB tmp;
 
@@ -1221,11 +999,10 @@ private:
 	void MidSplit()
 	{
 		InitRoot << <1, 1 >> > (nTriangle, nodes.data, nodes.d_ptr, activeList.data, activeList.d_ptr, nextList.d_ptr, smallList.d_ptr, triangleNodeAssociation.d_ptr, rootAABB);
-		cudaDeviceSynchronize();
+		gpuErrorCheck(cudaDeviceSynchronize());
 
 		CopyTriangle << <(nTriangle + 255) / 256, 256 >> > (triangleNodeAssociation.data, nTriangle);
-		cudaDeviceSynchronize();
-
+		gpuErrorCheck(cudaDeviceSynchronize());
 
 		while (!activeList.h_empty())
 		{
@@ -1247,23 +1024,23 @@ private:
 				triangleNodeAssociationHelper.data,
 				triangleNodeAssociationHelper.d_ptr,
 				start);
-			cudaDeviceSynchronize();
+			gpuErrorCheck(cudaDeviceSynchronize());
 			int end = triangleNodeAssociation.size();
 			int endnode = nodes.size() - 1;
 			int noftna = end - start;
 			thrust::sort_by_key(triangleNodeAssociationHelper.thrustPtr, triangleNodeAssociationHelper.thrustPtr + noftna, triangleNodeAssociation.thrustPtr + start);
-			cudaDeviceSynchronize();
+			gpuErrorCheck(cudaDeviceSynchronize());
 			// calculate triangleIndex
 			CalculateTriangleIndex << <1, 1 >> > (startnode, endnode, base, nodes.data);
-			cudaDeviceSynchronize();
+			gpuErrorCheck(cudaDeviceSynchronize());
 			// switch aciveList and nextList
 			//cout<<"nextlist size:"<<nextList.size()<<" tnasize="<<noftna<<endl;
-			cudaMemcpy(activeList.data, nextList.data, sizeof(int)*nextList.size(), cudaMemcpyDeviceToDevice);
-			cudaMemcpy(activeList.d_ptr, nextList.d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToDevice);
+			gpuErrorCheck(cudaMemcpy(activeList.data, nextList.data, sizeof(int)*nextList.size(), cudaMemcpyDeviceToDevice));
+			gpuErrorCheck(cudaMemcpy(activeList.d_ptr, nextList.d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToDevice));
 
 			nextList.h_clear();
 			triangleNodeAssociationHelper.h_clear();
-			cudaDeviceSynchronize();
+			gpuErrorCheck(cudaDeviceSynchronize());
 		}
 	}
 	void SAHSplit()
@@ -1287,29 +1064,256 @@ private:
 					triangleNodeAssociationHelper.data,
 					triangleNodeAssociationHelper.d_ptr,
 					start);
-				cudaDeviceSynchronize();
+				gpuErrorCheck(cudaDeviceSynchronize());
 				int end = triangleNodeAssociation.size();
 				int endnode = nodes.size() - 1;
 				int noftna = end - start;
 				thrust::sort_by_key(triangleNodeAssociationHelper.thrustPtr, triangleNodeAssociationHelper.thrustPtr + noftna, triangleNodeAssociation.thrustPtr + start);
-				cudaDeviceSynchronize();
+				gpuErrorCheck(cudaDeviceSynchronize());
 				// calculate triangleIndex
 				CalculateTriangleIndex << <1, 1 >> > (startnode, endnode, base, nodes.data);
-				cudaDeviceSynchronize();
+				gpuErrorCheck(cudaDeviceSynchronize());
 				// switch aciveList and nextList
 				//cout<<"nextlist size:"<<nextList.size()<<" tnasize="<<noftna<<endl;
-				cudaMemcpy(smallList.data, nextList.data, sizeof(int)*nextList.size(), cudaMemcpyDeviceToDevice);
-				cudaMemcpy(smallList.d_ptr, nextList.d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToDevice);
+				gpuErrorCheck(cudaMemcpy(smallList.data, nextList.data, sizeof(int)*nextList.size(), cudaMemcpyDeviceToDevice));
+				gpuErrorCheck(cudaMemcpy(smallList.d_ptr, nextList.d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToDevice));
 
 				nextList.h_clear();
 				triangleNodeAssociationHelper.h_clear();
-				cudaDeviceSynchronize();
+				gpuErrorCheck(cudaDeviceSynchronize());
 			}
 		}
 	}
 };
-
 #pragma endregion KDTree
+
+struct Mesh
+{
+	__host__ __device__ Mesh() {}
+	__host__  Mesh(vec3 position, const char* fileName = "", Material material = Material())
+	{
+		this->position = position;
+
+		std::string mtlBasePath;
+		std::string inputFile = fileName;
+		unsigned long pos = inputFile.find_last_of("/");
+		mtlBasePath = inputFile.substr(0, pos + 1);
+
+
+		std::vector<tinyobj::shape_t> obj_shapes;
+		std::vector<tinyobj::material_t> obj_materials;
+		std::vector<Material> materials;
+
+		printf("Loading %s...\n", fileName);
+		std::string err = tinyobj::LoadObj(obj_shapes, obj_materials, inputFile.c_str(), mtlBasePath.c_str());
+
+		if (!err.empty())
+			std::cerr << err << std::endl;
+
+		for (auto & obj_material : obj_materials)
+		{
+			std::string texturePath = "";
+
+			vec3 diffuseColor = vec3(obj_material.diffuse[0], obj_material.diffuse[1], obj_material.diffuse[2]);
+			vec3 emissionColor = vec3(obj_material.emission[0], obj_material.emission[1], obj_material.emission[2]);
+
+			if (!obj_material.diffuse_texname.empty())
+			{
+				if (obj_material.diffuse_texname[0] == '/') texturePath = obj_material.diffuse_texname;
+				texturePath = mtlBasePath + obj_material.diffuse_texname;
+				materials.push_back(Material(material.type, diffuseColor, emissionColor));
+			}
+			else
+			{
+				materials.push_back(Material(material.type, diffuseColor, emissionColor));
+			}
+		}
+
+		long shapeSize, indicesSize;
+		shapeSize = obj_shapes.size();
+		std::vector<Triangle>* triangles = new std::vector<Triangle>;
+
+		for (int i = 0; i < shapeSize; i++)
+		{
+			indicesSize = obj_shapes[i].mesh.indices.size() / 3;
+			for (size_t f = 0; f < indicesSize; f++)
+			{
+
+				vec3 v0_ = vec3(
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3 + 1],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3 + 2]
+				);
+
+				vec3 v1_ = vec3(
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3 + 1],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3 + 2]
+				);
+
+				vec3 v2_ = vec3(
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3 + 1],
+					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3 + 2]
+				);
+
+				vec3 t0_, t1_, t2_;
+
+				if (obj_shapes[i].mesh.indices[3 * f + 2] * 2 + 1 < obj_shapes[i].mesh.texcoords.size())
+				{
+					t0_ = vec3(
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f] * 2],
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f] * 2 + 1],
+						0
+					);
+
+					t1_ = vec3(
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 1] * 2],
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 1] * 2 + 1],
+						0
+					);
+
+					t2_ = vec3(
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 2] * 2],
+						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 2] * 2 + 1],
+						0
+					);
+				}
+				else
+				{
+					t0_ = vec3(0, 0, 0);
+					t1_ = vec3(0, 0, 0);
+					t2_ = vec3(0, 0, 0);
+				}
+
+				Triangle triangle;
+				if (obj_shapes[i].mesh.material_ids[f] < materials.size())
+				{
+					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, materials[obj_shapes[i].mesh.material_ids[f]]);
+				}
+				else
+				{
+					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, Material());
+				}
+				triangles->push_back(triangle);
+			}
+		}
+		this->count = triangles->size();
+		this->triangles = triangles->data();
+	}
+	__host__  Mesh(vec3 position, Triangle* triangles = nullptr, int count = 0, Material material = Material())
+	{
+		this->position = position;
+		this->triangles = new Triangle[count];
+		this->count = count;
+		for (int i = 0; i < count; i++)
+		{
+			this->triangles[i] = triangles[i];
+			this->triangles[i].material = material;
+		}
+	}
+	vec3 position;
+	Triangle* triangles;
+	int count;
+	KDTreeNode* nodes;	
+	int* tna;
+	__device__ ObjectIntersection Intersect(Ray ray)
+	{
+#if !ENABLE_KDTREE
+		ObjectIntersection intersection = ObjectIntersection();
+		intersection = RayKDTreeTraversal(nodes, tna, ray, triangles, position);
+		return intersection;
+#else
+		float tNear = INFINITY;
+		ObjectIntersection intersection = ObjectIntersection();
+		for (int i = 0; i < count; i++)
+		{
+			ObjectIntersection temp = triangles[i].Intersect(ray, position);
+			if (temp.hit && temp.t < tNear)
+			{
+				tNear = temp.t;
+				intersection = temp;
+			}
+		}
+		return intersection;
+#endif
+	}
+};
+
+#pragma endregion Structs
+
+#pragma region Scene
+
+Mesh CreateBox(vec3 pos, vec3 halfExtents, Material material)
+{
+	float halfWidth = halfExtents[0];
+	float halfHeight = halfExtents[1];
+	float halfDepth = halfExtents[2];
+
+	vec3 vertices[8] =
+	{
+		vec3(halfWidth, halfHeight, halfDepth),
+		vec3(-halfWidth, halfHeight, halfDepth),
+		vec3(halfWidth, -halfHeight, halfDepth),
+		vec3(-halfWidth, -halfHeight, halfDepth),
+		vec3(halfWidth, halfHeight, -halfDepth),
+		vec3(-halfWidth, halfHeight, -halfDepth),
+		vec3(halfWidth, -halfHeight, -halfDepth),
+		vec3(-halfWidth, -halfHeight, -halfDepth)
+	};
+
+	static int indices[36] =
+	{
+		0, 1, 2, 3, 2, 1, 4, 0, 6,
+		6, 0, 2, 5, 1, 4, 4, 1, 0,
+		7, 3, 1, 7, 1, 5, 5, 4, 7,
+		7, 4, 6, 7, 2, 3, 7, 6, 2
+	};
+
+	std::vector<Triangle> triangles;
+
+	for (int i = 0; i < 36; i += 3)
+	{
+		triangles.push_back(Triangle(vertices[indices[i]], vertices[indices[i + 1]], vertices[indices[i + 2]], material));
+	}
+
+	return Mesh(pos, triangles.data(), 12, material);
+}
+
+dim3 block, grid;
+Camera* camera;
+
+Sphere spheres[] =
+{
+	//Sphere(vec3(20, 10, 14), 8, Material(TRANS,  vec3(1))),
+	//Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(1))),
+	//Sphere(vec3(-14, 8, 14), 8, Material(SPEC,  vec3(1))),
+	//Sphere(vec3(14, 8, -14), 8, Material(GLOSS,  vec3(1)))
+	//Sphere(vec3(0, 65, 0), 8, Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
+	//Sphere(vec3(0, 30, 0), 8,  Material(TRANS,  vec3(1)))
+
+	//Sphere(vec3(-30, 8, 0), 8, Material(TRANS,  vec3(1))),
+	//Sphere(vec3(-10, 8, 0), 8, Material(DIFF,  vec3(1))),
+	//Sphere(vec3(10, 8, 0), 8, Material(SPEC,  vec3(1))),
+	Sphere(vec3(30, 9000, -0), 8, Material(GLOSS,  vec3(1)))
+};
+Mesh meshes[] =
+{
+	//Mesh(vec3(0,0,0), "Cornell_Long.obj")
+	Mesh(vec3(0,0,0), "test.obj")
+	//Mesh(vec3(0,0,0), "Board.obj")
+	//Mesh(vec3(0,0,0), "0250.obj", Material(TRANS, vec3(1)))
+	//CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
+	//Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF)),
+	//Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
+	////CreateBox(vec3(0, 0, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75))),
+	//CreateBox(vec3(30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.0, 0.0, 0.75))),
+	//CreateBox(vec3(-30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.75, 0.0, 0.0))),
+	//CreateBox(vec3(0, 15, 30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75))),
+	//CreateBox(vec3(0, 15, -30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75)))
+};
+
+#pragma endregion Scene
 
 #pragma region Kernels
 
@@ -1545,6 +1549,7 @@ private:
 		int i = y * width + x;
 
 		if (i >= width * height) return;
+
 		curandState randState;
 		float4 originColor;
 		surf2Dread(&originColor, surface, x * sizeof(float4), y);
@@ -1587,6 +1592,7 @@ private:
 	// Photon Mapping Rendering Loop
 	void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, bool dof, Photon* map, int mapSize, cudaSurfaceObject_t surface)
 	{
+		cudaDeviceSetLimit(cudaLimitMallocHeapSize, 5000000000 * sizeof(float));
 		int progress = 0;
 		for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
 		{
@@ -1594,16 +1600,16 @@ private:
 			{
 				cudaEvent_t start, stop;
 				float elapsedTime;
-				cudaEventCreate(&start);
-				cudaEventRecord(start, 0);
+				gpuErrorCheck(cudaEventCreate(&start));
+				gpuErrorCheck(cudaEventRecord(start, 0));
 				PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, frame, map, mapSize, surface);
-				cudaEventCreate(&stop);
-				cudaEventRecord(stop, 0);
-				cudaEventSynchronize(stop);
+				gpuErrorCheck(cudaEventCreate(&stop));
+				gpuErrorCheck(cudaEventRecord(stop, 0));
+				gpuErrorCheck(cudaEventSynchronize(stop));
 
-				cudaEventElapsedTime(&elapsedTime, start, stop);
+				gpuErrorCheck(cudaEventElapsedTime(&elapsedTime, start, stop));
 				printf("\rTracing %d/%d  |  Elapsed time : %f ms", ++progress, TRACE_OUTER_LOOP_X * TRACE_OUTER_LOOP_Y, elapsedTime);
-				cudaDeviceSynchronize();
+				gpuErrorCheck(cudaDeviceSynchronize());
 			}
 		}
 	}
@@ -1654,7 +1660,7 @@ private:
 		gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshCount));
 		gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector->data(), sizeof(Mesh) * meshCount, cudaMemcpyHostToDevice));
 
-		cudaDeviceSynchronize();
+		gpuErrorCheck(cudaDeviceSynchronize());
 		cudaEventCreate(&stop);
 		cudaEventRecord(stop, 0);
 		cudaEventSynchronize(stop);
@@ -1665,7 +1671,7 @@ private:
 		cudaEventCreate(&start);
 		cudaEventRecord(start, 0);
 		PhotonMapKernel << <grid, block >> > (cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, lightPos, lightEmission, maxPhotons, cudaPhotonMap, frame);
-		cudaDeviceSynchronize();
+		gpuErrorCheck(cudaDeviceSynchronize());
 		cudaEventCreate(&stop);
 		cudaEventRecord(stop, 0);
 		cudaEventSynchronize(stop);
@@ -1688,7 +1694,7 @@ private:
 		//cudaEventCreate(&start);
 		//cudaEventRecord(start, 0);
 		//DebugPhotonMapKernel<<<grid, block>>>(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, cudaDebugPhotonMap, maxPhotons, deviceImage);
-		//cudaDeviceSynchronize();
+		//gpuErrorCheck(cudaDeviceSynchronize());
 		//cudaEventCreate(&stop);
 		//cudaEventRecord(stop, 0);
 		//cudaEventSynchronize(stop);
@@ -1734,8 +1740,8 @@ private:
 
 		cudaEvent_t start, stop;
 		float memoryAllocTime, renderingTime;
-		cudaEventCreate(&start);
-		cudaEventRecord(start, 0);
+		gpuErrorCheck(cudaEventCreate(&start));
+		gpuErrorCheck(cudaEventRecord(start, 0));
 
 		Camera* cudaCamera;
 		gpuErrorCheck(cudaMalloc(&cudaCamera, sizeof(Camera)));
@@ -1748,8 +1754,9 @@ private:
 
 		int meshCount = sizeof(meshes) / sizeof(Mesh);
 		Mesh* cudaMeshes;
-		std::vector<Mesh>* meshVector = new std::vector<Mesh>;
+		std::vector<Mesh> meshVector;
 		std::vector<Triangle*> triangleVector;
+		std::vector<KDTree*> treeVector;
 		for (int i = 0; i < meshCount; i++)
 		{
 			Mesh currentMesh = meshes[i];
@@ -1757,20 +1764,29 @@ private:
 			Triangle* cudaTriangles;
 			gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
 			gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
-			cudaMesh.triangles = cudaTriangles;
-			meshVector->push_back(cudaMesh);
-			triangleVector.push_back(cudaTriangles);
-		}
-		gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshCount));
-		gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector->data(), sizeof(Mesh) * meshCount, cudaMemcpyHostToDevice));
 
-		cudaDeviceSynchronize();
-		cudaEventCreate(&stop);
-		cudaEventRecord(stop, 0);
-		cudaEventSynchronize(stop);
-		cudaEventElapsedTime(&memoryAllocTime, start, stop);
-		cudaEventDestroy(start);
-		cudaEventDestroy(stop);
+			KDTree* tree;
+
+			tree = new KDTree(currentMesh.triangles, currentMesh.count, AABB(vec3(-INF), vec3(INF)));
+			tree->Build();
+			cudaMesh.nodes = tree->nodes.data;
+			cudaMesh.tna = tree->triangleNodeAssociation.data;
+			cudaMesh.triangles = cudaTriangles;
+			meshVector.push_back(cudaMesh);
+			triangleVector.push_back(cudaTriangles);
+			treeVector.push_back(tree);
+		}
+
+		gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshCount));
+		gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector.data(), sizeof(Mesh) * meshCount, cudaMemcpyHostToDevice));
+
+		gpuErrorCheck(cudaDeviceSynchronize());
+		gpuErrorCheck(cudaEventCreate(&stop));
+		gpuErrorCheck(cudaEventRecord(stop, 0));
+		gpuErrorCheck(cudaEventSynchronize(stop));
+		gpuErrorCheck(cudaEventElapsedTime(&memoryAllocTime, start, stop));
+		gpuErrorCheck(cudaEventDestroy(start));
+		gpuErrorCheck(cudaEventDestroy(stop));
 
 		int photonMapSize = 0;
 		Photon* cudaPhotonMap;
@@ -1788,35 +1804,34 @@ private:
 		grid.x = ceil(ceil(width / TRACE_OUTER_LOOP_X) / block.x);
 		grid.y = ceil(ceil(height / TRACE_OUTER_LOOP_Y) / block.y);
 
-		cudaEventCreate(&start);
-		cudaEventRecord(start, 0);
+		gpuErrorCheck(cudaEventCreate(&start));
+		gpuErrorCheck(cudaEventRecord(start, 0));
 		TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, frame, dof, cudaPhotonMap, photonMapSize, surface);
-		cudaDeviceSynchronize();
-		cudaEventCreate(&stop);
-		cudaEventRecord(stop, 0);
-		cudaEventSynchronize(stop);
-		cudaEventElapsedTime(&renderingTime, start, stop);
-		cudaEventDestroy(start);
-		cudaEventDestroy(stop);
-		printf("\rRendering End(%d) | Memory Allocation Time : %f ms | Rendering time : %f ms\n", frame, memoryAllocTime, renderingTime);
+		gpuErrorCheck(cudaDeviceSynchronize());
+		gpuErrorCheck(cudaEventCreate(&stop));
+		gpuErrorCheck(cudaEventRecord(stop, 0));
+		gpuErrorCheck(cudaEventSynchronize(stop));
+		gpuErrorCheck(cudaEventElapsedTime(&renderingTime, start, stop));
+		gpuErrorCheck(cudaEventDestroy(start));
+		gpuErrorCheck(cudaEventDestroy(stop));
+		printf("\rRendering End(%d) | Memory Allocation Time : %f ms | Rendering time : %f ms | %f ms\n", frame, memoryAllocTime, renderingTime, memoryAllocTime + renderingTime);
 
 		if (photon)
 		{
 			delete photonMap;
 			cudaFree(cudaPhotonMap);
 		}
-		cudaFree(cudaCamera);
-		cudaFree(cudaSpheres);
+		gpuErrorCheck(cudaFree(cudaCamera));
+		gpuErrorCheck(cudaFree(cudaSpheres));
 		for (auto & triangle : triangleVector)
 		{
-			cudaFree(triangle);
+			gpuErrorCheck(cudaFree(triangle));
 		}
-		for (auto & mesh : *meshVector)
+		for (auto & tree : treeVector)
 		{
-			cudaFree(&mesh);
+			delete tree;
 		}
-		delete meshVector;
-		cudaFree(cudaMeshes);
+		gpuErrorCheck(cudaFree(cudaMeshes));
 	}
 
 #pragma endregion Kernels
