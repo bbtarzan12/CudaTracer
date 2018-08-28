@@ -59,24 +59,6 @@ struct Camera
 		focalDistance = 0.1f;
 	}
 
-	__device__ Ray GetRay(int x, int y)
-	{
-		vec3 wDir = glm::normalize(-forward);
-		vec3 uDir = glm::normalize(cross(up, wDir));
-		vec3 vDir = glm::cross(wDir, -uDir);
-
-		float top = glm::tan(fov * glm::pi<float>() / 360.0f);
-		float right = aspectRatio * top;
-		float bottom = -top;
-		float left = -right;
-
-		float imPlaneUPos = left + (right - left)*((x + 0.5f) / (float)width);
-		float imPlaneVPos = bottom + (top - bottom)*((y + 0.5f) / (float)height);
-
-		vec3 originDirection = imPlaneUPos * uDir + imPlaneVPos * vDir - wDir;
-		return Ray(position, normalize(originDirection));
-	}
-
 	__device__ Ray GetRay(curandState* randState, int x, int y, bool dof)
 	{
 		float jitterValueX = curand_uniform(randState) - 0.5;
@@ -86,7 +68,7 @@ struct Camera
 		vec3 uDir = glm::normalize(cross(up, wDir));
 		vec3 vDir = glm::cross(wDir, -uDir);
 
-		float top = glm::tan(fov * glm::pi<float>() / 360.0f);
+		float top = __tanf(fov * glm::pi<float>() / 360.0f);
 		float right = aspectRatio * top;
 		float bottom = -top;
 		float left = -right;
@@ -107,8 +89,8 @@ struct Camera
 
 				float angle = two_pi<float>() * r1;
 				float distance = aperture * sqrt(r2);
-				float apertureX = cos(angle) * distance;
-				float apertureY = sin(angle) * distance;
+				float apertureX = __cosf(angle) * distance;
+				float apertureY = __sinf(angle) * distance;
 
 				aperturePoint = position + (wDir * apertureX) + (uDir * apertureY);
 			}
@@ -277,11 +259,11 @@ struct Triangle
 
 		vec3 tvec = ray.origin - pos[0];
 		u = dot(tvec, pvec);
-		if (u < 0 || u > det) return ObjectIntersection(hit, t, normal, material);
+		if (u < EPSILON || u > det) return ObjectIntersection(hit, t, normal, material);
 
 		vec3 qvec = cross(tvec, v0v1);
 		v = dot(ray.direction, qvec);
-		if (v < 0 || u + v > det) return ObjectIntersection(hit, t, normal, material);
+		if (v < EPSILON || u + v > det) return ObjectIntersection(hit, t, normal, material);
 
 		t = dot(v0v2, qvec) / det;
 
@@ -434,11 +416,13 @@ struct Mesh
 				Triangle triangle;
 				if (obj_shapes[i].mesh.material_ids[f] < materials.size())
 				{
-					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, materials[obj_shapes[i].mesh.material_ids[f]]);
+					//triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, materials[obj_shapes[i].mesh.material_ids[f]]);
+					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, material);
 				}
 				else
 				{
-					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, Material());
+					//triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, Material());
+					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, material);
 				}
 				triangles->push_back(triangle);
 			}
@@ -541,7 +525,8 @@ Mesh meshes[] =
 {
 	//Mesh(vec3(0,0,0), "Cornell_Long.obj")
 	//Mesh(vec3(0,0,0), "Cornell.obj")
-	Mesh(vec3(0,0,0), "Board.obj")
+	//Mesh(vec3(0,0,0), "Board.obj")
+	Mesh(vec3(0,0,0), "0250.obj", Material(TRANS, vec3(1)))
 	//CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
 	//Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF)),
 	//Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
@@ -574,7 +559,7 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 position, glm::vec3 normal, vec3 &c
 		else
 			u = normalize(cross(vec3(1.0f, 0.0f, 0.0f), w));
 		vec3 v = cross(w, u);
-		vec3 reflected = normalize((u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrt(1 - r2)));
+		vec3 reflected = normalize((u * __cosf(r1) * r2s + v * __sinf(r1) * r2s + w * sqrt(1 - r2)));
 		color *= material.color;
 		return Ray(position, reflected);
 	}
@@ -583,14 +568,14 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 position, glm::vec3 normal, vec3 &c
 		float phi = 2 * pi<float>() * curand_uniform(randState);
 		float r2 = curand_uniform(randState);
 		float phongExponent = 20;
-		float cosTheta = pow(1 - r2, 1.0f / (phongExponent + 1));
-		float sinTheta = sin(1 - cosTheta * cosTheta);
+		float cosTheta = __powf(1 - r2, 1.0f / (phongExponent + 1));
+		float sinTheta = __sinf(1 - cosTheta * cosTheta);
 
 		vec3 w = normalize(ray.direction - normal * 2.0f * dot(normal, ray.direction));
 		vec3 u = normalize(cross((fabs(w.x) > .1 ? vec3(0, 1, 0) : vec3(1, 0, 0)), w));
 		vec3 v = cross(w, u);
 
-		vec3 reflected = normalize(u * cos(phi) * sinTheta + v * sin(phi) * sinTheta + w * cosTheta);
+		vec3 reflected = normalize(u * __cosf(phi) * sinTheta + v * __sinf(phi) * sinTheta + w * cosTheta);
 		color *= material.color;
 		return Ray(position, reflected);
 	}
@@ -684,46 +669,6 @@ __device__ ObjectIntersection Intersect(Ray ray, Sphere* spheres, Mesh* meshes, 
 	return intersection;
 }
 
-// Path Tracing
-__device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, curandState* randState)
-{
-	vec3 resultColor = vec3(0, 0, 0);
-	vec3 mask = vec3(1, 1, 1);
-
-	for (int depth = 0; depth < MAX_DEPTH; depth++)
-	{
-		ObjectIntersection intersection = Intersect(ray, spheres, meshes, sphereCount, meshCount);
-
-		if (intersection.hit == 0) return resultColor * vec3(0.2f, 0.2f, 0.2f);
-		resultColor += mask * intersection.material.emission;
-		vec3 position = ray.origin + ray.direction * intersection.t;
-		ray = GetReflectedRay(ray, position, intersection.normal, mask, intersection.material, randState);
-	}
-	return resultColor;
-}
-
-// Photon Map (Render Debug Image)
-__device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, Photon* map, int maxPhotons)
-{
-	vec3 color = vec3(0, 0, 0);
-	ObjectIntersection intersection = Intersect(ray, spheres, meshes, sphereCount, meshCount);
-	if (intersection.hit == false) return vec3(0, 0, 0);
-	vec3 position = ray.origin + ray.direction * intersection.t;
-	int nearPhotonCount = 0;
-	for (int i = 0; i < maxPhotons; i++)
-	{
-		if (dot(intersection.normal ,map[i].normal) > 0 && distance(position, map[i].position) <= 0.2f)
-		{
-			color += map[i].power;
-			nearPhotonCount++;
-		}
-	}
-	if (nearPhotonCount < 4)
-		return vec3(0, 0, 0);
-	color /= (float)nearPhotonCount;
-	return color;
-}
-
 // Photon Map (Building Photon Map)
 __device__ Photon TraceRay(Ray ray, vec3 lightEmission, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, curandState* randState)
 {
@@ -773,7 +718,7 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount
 		if (intersection.hit == 0)
 		{
 			float longlatX = atan2(ray.direction.x, ray.direction.z);
-			longlatX = longlatX < 0.f ? longlatX + two_pi<float>() : longlatX;
+			longlatX = longlatX < EPSILON ? longlatX + two_pi<float>() : longlatX;
 			float longlatY = acos(-ray.direction.y);
 
 			float u = longlatX / two_pi<float>();
@@ -798,7 +743,7 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount
 		for (int i = 0; i < maxPhotons; i++)
 		{
 			float dist = distance(position, map[i].position);
-			if (dist <= 5.0f && dot(intersection.normal, map[i].normal) > 0)
+			if (dist <= 5.0f && dot(intersection.normal, map[i].normal) > EPSILON)
 			{
 				photonColor += map[i].power * 1.0f / (pi<float>() * dist);
 				nearPhotonCount++;
@@ -814,58 +759,6 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount
 		ray = GetReflectedRay(ray, position, intersection.normal, mask, intersection.material, randState);
 	}
 	return resultColor;
-}
-
-// Image Rendering Kernel
-__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, vec3* deviceImage)
-{
-	int width = camera->width;
-	int height = camera->height;
-	int x = gridDim.x * blockDim.x * loopX + blockIdx.x * blockDim.x + threadIdx.x;
-	int y = gridDim.y * blockDim.y * loopY + blockIdx.y * blockDim.y + threadIdx.y;
-	int threadId = (blockIdx.x + blockIdx.y * gridDim.x) * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x) + threadIdx.x;
-
-	int i = y * width + x;
-
-	if (i >= width * height) return;
-
-	curandState randState;
-
-	float invSample = 1.0f / TRACE_SAMPLES;
-	vec3 color = vec3(0, 0, 0);
-	for (int s = 0; s < TRACE_SAMPLES; s++)
-	{
-		curand_init(WangHash(threadId) + WangHash(s), 0, 0, &randState);
-		Ray ray = camera->GetRay(&randState, x, y, dof);
-		color += TraceRay(ray, spheres, meshes, sphereCount, meshCount, &randState);
-	}
-	color *= invSample;
-	deviceImage[i] = color;
-}
-
-// Real Time Rendering Kernel
-__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, int frame, cudaSurfaceObject_t surface)
-{
-	int width = camera->width;
-	int height = camera->height;
-	int x = gridDim.x * blockDim.x * loopX + blockIdx.x * blockDim.x + threadIdx.x;
-	int y = gridDim.y * blockDim.y * loopY + blockIdx.y * blockDim.y + threadIdx.y;
-	int threadId = (blockIdx.x + blockIdx.y * gridDim.x) * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x) + threadIdx.x;
-
-	int i = y * width + x;
-
-	if (i >= width * height) return;
-
-	curandState randState;
-	float4 originColor;
-	surf2Dread(&originColor, surface, x * sizeof(float4), y);
-
-	vec3 resultColor = vec3(0, 0, 0);
-	curand_init(WangHash(threadId) + WangHash(frame), 0, 0, &randState);
-	Ray ray = camera->GetRay(&randState, x, y, dof);
-	vec3 color = TraceRay(ray, spheres, meshes, sphereCount, meshCount, &randState);
-	resultColor = (vec3(originColor.x, originColor.y, originColor.z) * (float)(frame - 1) + color) / (float)frame;
-	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
 }
 
 // Real time + Photon Mapping Kernel
@@ -892,23 +785,6 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
 }
 
-// Photon Mapping Debug Image Rendering Kernel
-__global__ void DebugPhotonMapKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, Photon* map, int maxPhotons, vec3* deviceImage)
-{
-	int width = camera->width;
-	int height = camera->height;
-	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	int threadId = (blockIdx.x + blockIdx.y * gridDim.x) * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x) + threadIdx.x;
-
-	int i = y * width + x;
-	if (i >= width * height) return;
-
-	Ray ray = camera->GetRay(x, y);
-	vec3 color = TraceRay(ray, spheres, meshes, sphereCount, meshCount, map, maxPhotons);
-	deviceImage[i] = color;
-}
-
 // Kernel to Build Photon Map
 __global__ void PhotonMapKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, vec3 lightPos, vec3 lightEmission, int maxPhotons, Photon* map, int frame = 0)
 {
@@ -929,59 +805,11 @@ __global__ void PhotonMapKernel(Camera* camera, Sphere* spheres, Mesh* meshes, i
 
 		float theta = 2 * pi<float>() * curand_uniform(&randState);
 		float phi = acos(1 - 2 * curand_uniform(&randState));
-		vec3 dir = normalize(vec3(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi)));
+		vec3 dir = normalize(vec3(__sinf(phi) * __cosf(theta), __sinf(phi) * __sinf(theta), __cosf(phi)));
 		Ray ray = Ray(lightPos, dir);
 		photon = TraceRay(ray, lightEmission, spheres, meshes, sphereCount, meshCount, &randState);
 	}
 	map[i] = photon;
-}
-
-// Image Rendering Loop
-void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, bool dof, vec3* deviceImage)
-{
-	int progress = 0;
-	for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
-	{
-		for (int j = 0; j < TRACE_OUTER_LOOP_Y; j++)
-		{
-			cudaEvent_t start, stop;
-			float elapsedTime;
-			cudaEventCreate(&start);
-			cudaEventRecord(start, 0);
-			PathKernel<< <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, deviceImage);
-			cudaEventCreate(&stop);
-			cudaEventRecord(stop, 0);
-			cudaEventSynchronize(stop);
-
-			cudaEventElapsedTime(&elapsedTime, start, stop);
-			printf("\rTracing %d/%d  |  Elapsed time : %f ms", ++progress, TRACE_OUTER_LOOP_X * TRACE_OUTER_LOOP_Y, elapsedTime);
-			cudaDeviceSynchronize();
-		}
-	}
-}
-
-// Real Time Rendering Loop
-void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, bool dof, cudaSurfaceObject_t surface)
-{
-	int progress = 0;
-	for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
-	{
-		for (int j = 0; j < TRACE_OUTER_LOOP_Y; j++)
-		{
-			cudaEvent_t start, stop;
-			float elapsedTime;
-			cudaEventCreate(&start);
-			cudaEventRecord(start, 0);
-			PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, frame, surface);
-			cudaEventCreate(&stop);
-			cudaEventRecord(stop, 0);
-			cudaEventSynchronize(stop);
-
-			cudaEventElapsedTime(&elapsedTime, start, stop);
-			printf("\rTracing %d/%d  |  Elapsed time : %f ms", ++progress, TRACE_OUTER_LOOP_X * TRACE_OUTER_LOOP_Y, elapsedTime);
-			cudaDeviceSynchronize();
-		}
-	}
 }
 
 // Photon Mapping Rendering Loop
@@ -1006,28 +834,6 @@ void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount,
 			cudaDeviceSynchronize();
 		}
 	}
-}
-
-void SaveImage(const char* path, int width, int height, const vec3* colors)
-{
-	FIBITMAP *dib = FreeImage_Allocate(width, height, 32);
-	RGBQUAD rgb;
-	for (int x = 0; x < width; x++)
-	{
-		for (int y = 0; y < height; y++)
-		{
-			int i = y * width + x;
-			rgb.rgbRed = std::fmax(std::fmin(colors[i].r * 255, 255), 0);
-			rgb.rgbGreen = std::fmax(std::fmin(colors[i].g * 255, 255), 0);
-			rgb.rgbBlue = std::fmax(std::fmin(colors[i].b * 255, 255), 0);
-			rgb.rgbReserved = 1.0f;
-			FreeImage_SetPixelColor(dib, x, height - y, &rgb);
-		}
-	}
-	dib = FreeImage_ConvertTo24Bits(dib);
-	bool success = FreeImage_Save(FIF_PNG, dib, path);
-	if (!success) std::cout << "Image Save Error " << std::endl;
-	else std::cout << "Image Save Success : " << path << std::endl;
 }
 
 Photon* BuildPhotonMap(int maxPhotons, int frame = 0)
@@ -1147,76 +953,6 @@ Photon* BuildPhotonMap(int maxPhotons, int frame = 0)
 	delete meshVector;
 	cudaFree(cudaMeshes);
 	return photons;
-}
-
-void RenderImage(bool dof)
-{
-	int width = camera->width;
-	int height = camera->height;
-
-	block = dim3(32, 18);
-	grid.x = ceil(ceil(width / TRACE_OUTER_LOOP_X) / block.x);
-	grid.y = ceil(ceil(height / TRACE_OUTER_LOOP_Y) / block.y);
-
-	Camera* cudaCamera;
-	gpuErrorCheck(cudaMalloc(&cudaCamera, sizeof(Camera)));
-	gpuErrorCheck(cudaMemcpy(cudaCamera, camera, sizeof(Camera), cudaMemcpyHostToDevice));
-
-	int sphereCount = sizeof(spheres) / sizeof(Sphere);
-	Sphere* cudaSpheres;
-	gpuErrorCheck(cudaMalloc(&cudaSpheres, sizeof(Sphere) * sphereCount));
-	gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres, sizeof(Sphere) * sphereCount, cudaMemcpyHostToDevice));
-
-	int meshCount = sizeof(meshes) / sizeof(Mesh);
-	Mesh* cudaMeshes;
-	std::vector<Mesh>* meshVector = new std::vector<Mesh>;
-	std::vector<Triangle*> triangleVector;
-	for (int i = 0; i < meshCount; i++)
-	{
-		Mesh currentMesh = meshes[i];
-		Mesh cudaMesh = currentMesh;
-		Triangle* cudaTriangles;
-		gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
-		gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
-		cudaMesh.triangles = cudaTriangles;
-		meshVector->push_back(cudaMesh);
-		triangleVector.push_back(cudaTriangles);
-	}
-	gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshCount));
-	gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector->data(), sizeof(Mesh) * meshCount, cudaMemcpyHostToDevice));
-
-	vec3* deviceImage;
-	cudaEvent_t start, stop;
-	float elapsedTime;
-	cudaEventCreate(&start);
-	cudaEventRecord(start, 0);
-	cudaMalloc(&deviceImage, width * height * sizeof(vec3));
-	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, dof, deviceImage);
-	cudaDeviceSynchronize();
-	cudaEventCreate(&stop);
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&elapsedTime, start, stop);
-	printf("\rRendering End | Elapsed time : %f ms\n", elapsedTime);
-
-	vec3* hostImage = new vec3[width * height];
-	cudaMemcpy(hostImage, deviceImage, width * height * sizeof(vec3), cudaMemcpyDeviceToHost);
-
-	SaveImage("Result.png", width, height, hostImage);
-	cudaFree(deviceImage);
-	cudaFree(cudaCamera);
-	cudaFree(cudaSpheres);
-	for (auto & triangle : triangleVector)
-	{
-		cudaFree(triangle);
-	}
-	for (auto & mesh : *meshVector)
-	{
-		cudaFree(&mesh);
-	}
-	delete meshVector;
-	cudaFree(cudaMeshes);
-	delete hostImage;
 }
 
 void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, int frame)
@@ -1399,7 +1135,7 @@ void Mouse(int button, int state, int x, int y)
 }
 void MouseWheel(int button, int dir, int x, int y)
 {
-	if (dir > 0)
+	if (dir > EPSILON)
 	{
 		camera->fov++;
 		cudaDirty = true;
