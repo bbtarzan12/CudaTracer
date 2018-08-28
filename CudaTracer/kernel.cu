@@ -1730,8 +1730,10 @@ Mesh meshes[] =
 			gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
 			gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
 
+#if ENABLE_KDTREE
 			cudaMesh.nodes = currentMesh.tree->nodes.data;
 			cudaMesh.tna = currentMesh.tree->triangleNodeAssociation.data;
+#endif
 			cudaMesh.triangles = cudaTriangles;
 			meshVector.push_back(cudaMesh);
 			triangleVector.push_back(cudaTriangles);
@@ -2156,8 +2158,10 @@ int main(int argc, char **argv)
 	}
 
 	{
+#if ENABLE_KDTREE
 		meshes[0].tree = new KDTree(meshes[0].triangles, meshes[0].count, AABB(vec3(-INF), vec3(INF)));
 		meshes[0].tree->Build();
+#endif
 	}
 
 	glutKeyboardFunc(Keyboard);

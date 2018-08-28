@@ -65,7 +65,7 @@ constexpr int MAX_BUILD_PHOTON_TRHESHOLD = 5;
 constexpr int MAX_PHOTONS = 10000;
 
 // KD Tree
-constexpr bool ENABLE_KDTREE = true;
+#define ENABLE_KDTREE 0
 constexpr int KDTREE_THRESHOLD = 32;
 constexpr int KDTREE_MAX_STACK = 128;
 
