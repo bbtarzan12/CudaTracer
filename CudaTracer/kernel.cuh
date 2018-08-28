@@ -10,6 +10,11 @@
 #include "curand_kernel.h"
 #include "device_launch_parameters.h"
 
+#include <thrust/transform_reduce.h>
+#include <thrust/functional.h>
+#include <thrust/sort.h>
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
 #include <freeimage.h>
 
 #define gpuErrorCheck(ans) { gpuAssert((ans), __FILE__, __LINE__); }
@@ -27,6 +32,7 @@ constexpr bool ENABLE_SURFACE_ACNE = false;
 
 
 using namespace glm;
+using namespace std;
 
 enum MaterialType { NONE, DIFF, GLOSS, TRANS, SPEC };
 
@@ -57,6 +63,11 @@ bool enableSaveImage = false;
 // Photon
 constexpr int MAX_BUILD_PHOTON_TRHESHOLD = 5;
 constexpr int MAX_PHOTONS = 10000;
+
+// KD Tree
+constexpr bool ENABLE_KDTREE = true;
+constexpr int KDTREE_THRESHOLD = 32;
+constexpr int KDTREE_MAX_STACK = 128;
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
 {
@@ -105,5 +116,94 @@ BOOL SwapRedBlue32(FIBITMAP* dib)
 
 	return TRUE;
 }
+
+#pragma region KD Tree
+
+template<class T>
+class DeviceStack {
+public:
+	__device__  DeviceStack() {
+		ptr = 0;
+		//cudaMalloc((void**)&data, sizeof(T)*GPUKDTREEMAXSTACK);
+	}
+	__device__  ~DeviceStack() {}//cudaFree(data);}
+	__inline__ __device__  void push(const T& t) { data[ptr++] = t; if (ptr > KDTREE_MAX_STACK)printf("stack over flow!"); }
+	__inline__ __device__  T pop() { return data[--ptr]; }
+	__inline__ __device__  bool empty() { return ptr <= 0; }
+public:
+	unsigned int ptr;
+	T data[KDTREE_MAX_STACK];
+};
+
+template<class T>
+class DeviceVector {
+public:
+	DeviceVector() {}
+	~DeviceVector() {
+		cudaFree(data);
+		cudaFree(d_size);
+		cudaFree(d_ptr);
+	}
+	void allocateMemory(unsigned int n) {
+		h_size = n;
+		h_ptr = 0;
+		cudaMalloc((void**)&d_size, sizeof(unsigned int));
+		cudaMalloc((void**)&d_ptr, sizeof(unsigned int));
+		cudaMemcpy(d_size, &h_size, sizeof(unsigned int), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_ptr, &h_ptr, sizeof(unsigned int), cudaMemcpyHostToDevice);
+		cudaMalloc((void**)&data, sizeof(T)*n);
+		thrustPtr = thrust::device_ptr<T>(data);
+	}
+	void CopyToHost(T* dist) {
+		cudaMemcpy(&h_ptr, d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToHost);
+		cudaMemcpy(dist, data, sizeof(T)*h_ptr, cudaMemcpyDeviceToHost);
+	}
+	unsigned int size() {
+		cudaMemcpy(&h_ptr, d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToHost);
+		return h_ptr;
+	}
+
+	__inline__ __device__ static unsigned int push_back(T* d, unsigned int* ptr, T& t) {
+		unsigned int i = atomicAdd(ptr, 1);
+		d[i] = t;
+		return i;
+	}
+	__inline__ __device__ static void pop(T* d, unsigned int* ptr, T& t) {
+		unsigned int i = atomicAdd(ptr, -1);
+		t = d[i - 1];
+	}
+	__inline__ __device__ static bool empty(unsigned int* ptr) {
+		if (*ptr <= 0)
+			return true;
+		return false;
+	}
+	__host__ bool h_empty() {
+		cudaMemcpy(&h_ptr, d_ptr, sizeof(unsigned int), cudaMemcpyDeviceToHost);
+		if (h_ptr <= 0)
+			return true;
+		return false;
+	}
+	__host__ void h_clear() {
+		h_ptr = 0;
+		cudaMemcpy(d_ptr, &h_ptr, sizeof(unsigned int), cudaMemcpyHostToDevice);
+	}
+	__inline__ __device__ static void clear(unsigned int* ptr) {
+		*ptr = 0;
+	}
+	__host__ __device__
+		T &operator[](int i) { return data[i]; }
+
+public:
+	unsigned int h_size;
+	unsigned int h_ptr;
+	unsigned int* d_size; // memory size
+	unsigned int* d_ptr; // data size
+	T* data;
+	thrust::device_ptr<T> thrustPtr; // in order to use thrust lib algorithms
+};
+
+
+#pragma endregion KD Tree
+
 
 #endif
