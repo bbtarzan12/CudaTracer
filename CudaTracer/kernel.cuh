@@ -21,7 +21,7 @@
 
 constexpr int WIDTH = 1280;
 constexpr int HEIGHT = 720;
-constexpr int TRACE_SAMPLES = 100;
+constexpr int TRACE_SAMPLES = 1000;
 constexpr int TRACE_OUTER_LOOP_X = 4;
 constexpr int TRACE_OUTER_LOOP_Y = 3;
 constexpr float EPSILON = 1e-2;
@@ -60,14 +60,17 @@ bool enableDof = false;
 bool enablePhoton = false;
 bool enableSaveImage = false;
 
+// OpenGL Debug
+bool enableDrawNormal = false;
+
 // Photon
 constexpr int MAX_BUILD_PHOTON_TRHESHOLD = 5;
 constexpr int MAX_PHOTONS = 10000;
 
 // KD Tree
-#define ENABLE_KDTREE 0
+#define ENABLE_KDTREE 1
 constexpr int KDTREE_THRESHOLD = 32;
-constexpr int KDTREE_MAX_STACK = 128;
+constexpr int KDTREE_MAX_STACK = 1024;
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
 {

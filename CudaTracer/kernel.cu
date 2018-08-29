@@ -5,6 +5,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 #include "kernel.cuh"
 #include "Input.h"
@@ -221,20 +222,26 @@ struct ObjectIntersection
 struct Triangle
 {
 	__host__ __device__ Triangle() {}
-	__host__ __device__ Triangle(vec3 pos0, vec3 pos1, vec3 pos2, Material material)
+	__host__ __device__ Triangle(vec3 pos0, vec3 pos1, vec3 pos2, vec3 nor0, vec3 nor1, vec3 nor2, Material material)
 	{
 		pos[0] = pos0;
 		pos[1] = pos1;
 		pos[2] = pos2;
+		nor[0] = normalize(nor0);
+		nor[1] = normalize(nor1);
+		nor[2] = normalize(nor2);
 		hasTexture = false;
 		this->material = material;
 	}
 
-	__host__ __device__ Triangle(vec3 pos0, vec3 pos1, vec3 pos2, vec3 tex0, vec3 tex1, vec3 tex2, Material material)
+	__host__ __device__ Triangle(vec3 pos0, vec3 pos1, vec3 pos2, vec3 nor0, vec3 nor1, vec3 nor2, vec3 tex0, vec3 tex1, vec3 tex2, Material material)
 	{
 		pos[0] = pos0;
 		pos[1] = pos1;
 		pos[2] = pos2;
+		nor[0] = normalize(nor0);
+		nor[1] = normalize(nor1);
+		nor[2] = normalize(nor2);
 		tex[0] = tex0;
 		tex[1] = tex1;
 		tex[2] = tex2;
@@ -248,31 +255,33 @@ struct Triangle
 		float u, v, t = 0;
 		vec3 pos[3] = { this->pos[0] + position, this->pos[1] + position, this->pos[2] + position };
 
-		vec3 normal = normalize(cross(pos[1] - pos[0], pos[2] - pos[0]));
+		vec3 normal = vec3(0); /*= normalize(cross(pos[1] - pos[0], pos[2] - pos[0]));*/
 
 		vec3 v0v1 = pos[1] - pos[0];
 		vec3 v0v2 = pos[2] - pos[0];
 		vec3 pvec = cross(ray.direction, v0v2);
 		float det = dot(v0v1, pvec);
-		if (fabs(det) < epsilon<float>()) return ObjectIntersection(hit, t, normal, material);
+		if (fabs(det) < EPSILON) return ObjectIntersection(hit, t, normal, material);
 
+		float invDet = 1.0f / det;
 		vec3 tvec = ray.origin - pos[0];
-		u = dot(tvec, pvec);
-		if (u < 0 || u > det) return ObjectIntersection(hit, t, normal, material);
+		u = dot(tvec, pvec) * invDet;
+		if (u < 0 || u > 1) return ObjectIntersection(hit, t, normal, material);
 
 		vec3 qvec = cross(tvec, v0v1);
-		v = dot(ray.direction, qvec);
-		if (v < 0 || u + v > det) return ObjectIntersection(hit, t, normal, material);
+		v = dot(ray.direction, qvec) * invDet;
+		if (v < 0 || u + v > 1) return ObjectIntersection(hit, t, normal, material);
 
-		t = dot(v0v2, qvec) / det;
+		t = dot(v0v2, qvec) * invDet;
 
-		if (t < epsilon<float>()) return ObjectIntersection(hit, t, normal, material);
-
+		if (t < EPSILON) return ObjectIntersection(hit, t, normal, material);
+		normal = normalize((1 - u - v) * nor[0] + u * nor[1] + v * nor[2]);
 		hit = true;
 		return ObjectIntersection(hit, t, normal, material);
 	}
 
 	vec3 pos[3];
+	vec3 nor[3];
 	vec3 tex[3];
 	Material material;
 	bool hasTexture;
@@ -326,6 +335,43 @@ struct AABB
 	{
 		bounds[0] = min;
 		bounds[1] = max;
+	}
+	__device__ __host__ AABB(Triangle* triangles, int count)
+	{
+		for (int i = 0; i < count; i++)
+		{
+			Expand(triangles[i]);
+		}
+	}
+
+	__device__ __host__ void Expand(Triangle triangle)
+	{
+		Expand
+		(
+			vec3
+			(
+				min(min(triangle.pos[0].x, triangle.pos[1].x), triangle.pos[2].x),
+				min(min(triangle.pos[0].y, triangle.pos[1].y), triangle.pos[2].y),
+				min(min(triangle.pos[0].z, triangle.pos[1].z), triangle.pos[2].z)
+			),
+			vec3
+			(
+				max(max(triangle.pos[0].x, triangle.pos[1].x), triangle.pos[2].x),
+				max(max(triangle.pos[0].y, triangle.pos[1].y), triangle.pos[2].y),
+				max(max(triangle.pos[0].z, triangle.pos[1].z), triangle.pos[2].z)
+			)
+		);
+	}
+
+	__device__ __host__ void Expand(vec3 min, vec3 max)
+	{
+		if (min.x < bounds[0].x) bounds[0].x = min.x;
+		if (min.y < bounds[0].y) bounds[0].y = min.y;
+		if (min.z < bounds[0].z) bounds[0].z = min.z;
+
+		if (max.x > bounds[1].x) bounds[1].x = max.x;
+		if (max.y > bounds[1].y) bounds[1].y = max.y;
+		if (max.z > bounds[1].z) bounds[1].z = max.z;
 	}
 	vec3 bounds[2];
 };
@@ -531,7 +577,7 @@ __global__ void MidSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 		DeviceVector<int>::push_back(nextList, nextListPtr, leftid);
 	else if (leftcount > KDTREE_THRESHOLD)
 		DeviceVector<int>::push_back(smallList, smallListPtr, leftid);
-	if (rightcount > KDTREE_THRESHOLD)
+	if (rightcount > KDTREE_THRESHOLD * 2)
 		DeviceVector<int>::push_back(nextList, nextListPtr, rightid);
 	else if (rightcount > KDTREE_THRESHOLD)
 		DeviceVector<int>::push_back(smallList, smallListPtr, rightid);
@@ -714,7 +760,7 @@ __global__ void SAHSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 	//printf("leftcount=%d\nrightcount=%d\n", leftcount, rightcount);
 	nodes[leftid].triangleNumber = leftcount;
 	nodes[rightid].triangleNumber = rightcount;
-	//printf("node %d was splited with left = %d and right = %d with sp=%.5f tna=%d\n", id, leftcount, rightcount, sp, *tnaPtr);
+	//printf("node %d was splited with left = %d and right = %d with tna=%d\n", id, leftcount, rightcount, *tnaPtr);
 	// add to nextList
 
 	if (leftcount > KDTREE_THRESHOLD)
@@ -757,16 +803,16 @@ __device__ float KDRayTraversal(KDTreeNode* root, Ray ray, float& minDist, float
 		ray.direction.z = -ray.direction.z;
 	}
 
-	double divx = 1 / ray.direction.x;
-	double divy = 1 / ray.direction.y;
-	double divz = 1 / ray.direction.z;
+	float divx = 1 / ray.direction.x;
+	float divy = 1 / ray.direction.y;
+	float divz = 1 / ray.direction.z;
 
-	double tx0 = (minBox.x - ray.origin.x) * divx;
-	double tx1 = (maxBox.x - ray.origin.x) * divx;
-	double ty0 = (minBox.y - ray.origin.y) * divy;
-	double ty1 = (maxBox.y - ray.origin.y) * divy;
-	double tz0 = (minBox.z - ray.origin.z) * divz;
-	double tz1 = (maxBox.z - ray.origin.z) * divz;
+	float tx0 = (minBox.x - ray.origin.x) * divx;
+	float tx1 = (maxBox.x - ray.origin.x) * divx;
+	float ty0 = (minBox.y - ray.origin.y) * divy;
+	float ty1 = (maxBox.y - ray.origin.y) * divy;
+	float tz0 = (minBox.z - ray.origin.z) * divz;
+	float tz1 = (maxBox.z - ray.origin.z) * divz;
 
 	float tmin = max(max(tx0, ty0), tz0);
 	float tmax = min(min(tx1, ty1), tz1);
@@ -919,11 +965,12 @@ struct MinZ
 struct KDTree
 {
 	KDTree(){}
-	KDTree(Triangle* tri, int n, AABB rootaabb)
+	KDTree(Triangle* tri, int n)
 	{
 		h_Triangles = tri;
 		nTriangle = n;
-		rootAABB = rootaabb;
+		rootAABB = AABB(h_Triangles, nTriangle);
+		printf("Root AABB Size : Min : %f %f %f | Max : %f %f %f\n", rootAABB.bounds[0].x, rootAABB.bounds[0].y, rootAABB.bounds[0].z, rootAABB.bounds[1].x, rootAABB.bounds[1].y, rootAABB.bounds[1].z);
 	}
 	~KDTree() { freeMemory(); }
 	void Build()
@@ -1098,16 +1145,19 @@ struct Mesh
 		unsigned long pos = inputFile.find_last_of("/");
 		mtlBasePath = inputFile.substr(0, pos + 1);
 
-
+		tinyobj::attrib_t attrib;
 		std::vector<tinyobj::shape_t> obj_shapes;
 		std::vector<tinyobj::material_t> obj_materials;
 		std::vector<Material> materials;
 
 		printf("Loading %s...\n", fileName);
-		std::string err = tinyobj::LoadObj(obj_shapes, obj_materials, inputFile.c_str(), mtlBasePath.c_str());
+		std::string err;
+		bool ret = tinyobj::LoadObj(&attrib, &obj_shapes, &obj_materials, &err, inputFile.c_str(), mtlBasePath.c_str());
 
 		if (!err.empty())
 			std::cerr << err << std::endl;
+
+		if (!ret) exit(1);
 
 		for (auto & obj_material : obj_materials)
 		{
@@ -1128,73 +1178,77 @@ struct Mesh
 			}
 		}
 
-		long shapeSize, indicesSize;
+		long shapeSize, faceSize;
 		shapeSize = obj_shapes.size();
 		std::vector<Triangle>* triangles = new std::vector<Triangle>;
 
 		for (int i = 0; i < shapeSize; i++)
 		{
-			indicesSize = obj_shapes[i].mesh.indices.size() / 3;
-			for (size_t f = 0; f < indicesSize; f++)
+			size_t index_offset = 0;
+			faceSize = obj_shapes[i].mesh.num_face_vertices.size();
+			for (size_t f = 0; f < faceSize; f++)
 			{
+				size_t fnum = obj_shapes[i].mesh.num_face_vertices[f];
+				vec3 pos[3];
+				vec3 nor[3];
 
-				vec3 v0_ = vec3(
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3 + 1],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f] * 3 + 2]
-				);
-
-				vec3 v1_ = vec3(
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3 + 1],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 1] * 3 + 2]
-				);
-
-				vec3 v2_ = vec3(
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3 + 1],
-					obj_shapes[i].mesh.positions[obj_shapes[i].mesh.indices[3 * f + 2] * 3 + 2]
-				);
+				for (int k = 0; k < 3; k++)
+				{
+					tinyobj::index_t idx = obj_shapes[i].mesh.indices[index_offset + k];
+					pos[k] = vec3(
+						attrib.vertices[3 * idx.vertex_index + 0],
+						attrib.vertices[3 * idx.vertex_index + 1],
+						attrib.vertices[3 * idx.vertex_index + 2]
+					);
+					nor[k] = vec3(
+						attrib.normals[3 * idx.normal_index + 0],
+						attrib.normals[3 * idx.normal_index + 1],
+						attrib.normals[3 * idx.normal_index + 2]
+					);
+					nor[k] = normalize(nor[k]);
+				}
 
 				vec3 t0_, t1_, t2_;
 
-				if (obj_shapes[i].mesh.indices[3 * f + 2] * 2 + 1 < obj_shapes[i].mesh.texcoords.size())
-				{
-					t0_ = vec3(
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f] * 2],
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f] * 2 + 1],
-						0
-					);
+				//if (obj_shapes[i].mesh.indices[3 * f + 2] * 2 + 1 < obj_shapes[i].mesh.texcoords.size())
+				//{
+				//	t0_ = vec3(
+				//		obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f] * 2],
+				//		obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f] * 2 + 1],
+				//		0
+				//	);
 
-					t1_ = vec3(
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 1] * 2],
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 1] * 2 + 1],
-						0
-					);
+				//	t1_ = vec3(
+				//		obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 1] * 2],
+				//		obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 1] * 2 + 1],
+				//		0
+				//	);
 
-					t2_ = vec3(
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 2] * 2],
-						obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 2] * 2 + 1],
-						0
-					);
-				}
-				else
-				{
-					t0_ = vec3(0, 0, 0);
-					t1_ = vec3(0, 0, 0);
-					t2_ = vec3(0, 0, 0);
-				}
+				//	t2_ = vec3(
+				//		obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 2] * 2],
+				//		obj_shapes[i].mesh.texcoords[obj_shapes[i].mesh.indices[3 * f + 2] * 2 + 1],
+				//		0
+				//	);
+				//}
+				//else
+				//{
+				//	t0_ = vec3(0, 0, 0);
+				//	t1_ = vec3(0, 0, 0);
+				//	t2_ = vec3(0, 0, 0);
+				//}
 
 				Triangle triangle;
 				if (obj_shapes[i].mesh.material_ids[f] < materials.size())
 				{
-					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, materials[obj_shapes[i].mesh.material_ids[f]]);
+					triangle = Triangle(pos[0], pos[1], pos[2], nor[0], nor[1], nor[2], t0_, t1_, t2_, materials[obj_shapes[i].mesh.material_ids[f]]);
 				}
 				else
 				{
-					triangle = Triangle(v0_, v1_, v2_, t0_, t1_, t2_, Material());
+					triangle = Triangle(pos[0], pos[1], pos[2], nor[0], nor[1], nor[2], t0_, t1_, t2_, material);
 				}
 				triangles->push_back(triangle);
+
+				index_offset += fnum;
 			}
 		}
 		this->count = triangles->size();
@@ -1274,7 +1328,7 @@ Mesh CreateBox(vec3 pos, vec3 halfExtents, Material material)
 
 	for (int i = 0; i < 36; i += 3)
 	{
-		triangles.push_back(Triangle(vertices[indices[i]], vertices[indices[i + 1]], vertices[indices[i + 2]], material));
+		//triangles.push_back(Triangle(vertices[indices[i]], vertices[indices[i + 1]], vertices[indices[i + 2]], material));
 	}
 
 	return Mesh(pos, triangles.data(), 12, material);
@@ -1295,14 +1349,15 @@ Sphere spheres[] =
 	//Sphere(vec3(-30, 8, 0), 8, Material(TRANS,  vec3(1))),
 	//Sphere(vec3(-10, 8, 0), 8, Material(DIFF,  vec3(1))),
 	//Sphere(vec3(10, 8, 0), 8, Material(SPEC,  vec3(1))),
-	Sphere(vec3(30, 9000, -0), 8, Material(GLOSS,  vec3(1)))
+	Sphere(vec3(20, 0, 20), 10, Material(SPEC,  vec3(1)))
 };
 Mesh meshes[] =
 {
-	//Mesh(vec3(0,0,0), "Cornell_Long.obj")
-	Mesh(vec3(0,0,0), "test.obj")
-	//Mesh(vec3(0,0,0), "Board.obj")
+	//Mesh(vec3(0,0,0), "Cornell.obj"),
 	//Mesh(vec3(0,0,0), "0250.obj", Material(TRANS, vec3(1)))
+	Mesh(vec3(0,0,0), "test.obj", Material(TRANS, vec3(1)))
+	//Mesh(vec3(0,0,0), "Cornell_Small.obj")
+	//Mesh(vec3(0,5,0), "wired_mesh.obj", Material(TRANS, vec3(1)))
 	//CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
 	//Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF)),
 	//Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
@@ -1501,9 +1556,9 @@ Mesh meshes[] =
 				float v = longlatY / pi<float>();
 
 				int u2 = (int)(u * HDRWidth);
-				int v2 = (int)(v * HDRHeight);
+				int tvec = (int)(v * HDRHeight);
 
-				int HDRtexelidx = u2 + v2 * HDRWidth;
+				int HDRtexelidx = u2 + tvec * HDRWidth;
 
 				float4 HDRcol = tex1Dfetch(HDRtexture, HDRtexelidx);
 				vec3 HDRcol2 = vec3(HDRcol.x, HDRcol.y, HDRcol.z);
@@ -1825,6 +1880,10 @@ Mesh meshes[] =
 			frame = 1;
 			cudaDirty = false;
 		}
+		if (IsKeyDown('n'))
+		{
+			enableDrawNormal = !enableDrawNormal;
+		}
 		if (IsKeyDown('t'))
 		{
 			camera->aperture += 0.1f;
@@ -2034,11 +2093,24 @@ Mesh meshes[] =
 					normal = normalize(normal);
 					glBegin(GL_TRIANGLE_STRIP);
 					glNormal3fv(value_ptr(normal));
-
 					glVertex3fv(value_ptr(p0));
 					glVertex3fv(value_ptr(p1));
 					glVertex3fv(value_ptr(p2));
 					glEnd();
+				
+					if (enableDrawNormal)
+					{
+						glLineWidth(1.0f);
+						glColor3f(1.0f, 1.0f, 1.0f);
+						glBegin(GL_LINES);
+						glVertex3fv(value_ptr(triangles[i].pos[0]));
+						glVertex3fv(value_ptr(triangles[i].nor[0] + triangles[i].pos[0]));
+						glVertex3fv(value_ptr(triangles[i].pos[1]));
+						glVertex3fv(value_ptr(triangles[i].nor[1] + triangles[i].pos[1]));
+						glVertex3fv(value_ptr(triangles[i].pos[2]));
+						glVertex3fv(value_ptr(triangles[i].nor[2] + triangles[i].pos[2]));
+						glEnd();
+					}
 				}
 				glPopMatrix();
 			}
@@ -2159,8 +2231,12 @@ int main(int argc, char **argv)
 
 	{
 #if ENABLE_KDTREE
-		meshes[0].tree = new KDTree(meshes[0].triangles, meshes[0].count, AABB(vec3(-INF), vec3(INF)));
-		meshes[0].tree->Build();
+		int mesheCount = sizeof(meshes) / sizeof(Mesh);
+		for (int i = 0; i < mesheCount; i++)
+		{
+			meshes[i].tree = new KDTree(meshes[i].triangles, meshes[i].count);
+			meshes[i].tree->Build();
+		}
 #endif
 	}
 
