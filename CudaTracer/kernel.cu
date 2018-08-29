@@ -179,8 +179,8 @@ private:
 		pitch += mouseSpeed * float(height / 2 - yPos) * deltaTime;
 		yaw += mouseSpeed * float(width / 2 - xPos) * deltaTime;
 
-		pitch = glm::clamp(pitch, -89.0f, 89.0f);
-		yaw = glm::mod(yaw, 360.0f);
+		pitch = clamp(pitch, -89.0f, 89.0f);
+		yaw = mod(yaw, 360.0f);
 
 		WarpMouse(width / 2, height / 2);
 	}
@@ -377,14 +377,14 @@ struct AABB
 };
 struct KDTreeNode
 {
-	__device__ __host__ KDTreeNode(int l = -1, int r = -1, int sa = -1, int ti = 0, int tn = 0, float sp = 0)
+	__device__ __host__ KDTreeNode(int l = -1, int r = -1, int sa = -1, int ti = 0, int tn = 0, float sp = 0, int d = 0)
 	{
-		leftChild = l; rightChild = r; splitAxis = sa; triangleIndex = ti; triangleNumber = tn; splitPos = sp;
+		leftChild = l; rightChild = r; splitAxis = sa; triangleIndex = ti; triangleNumber = tn; splitPos = sp; depth = d;
 	}
 	__device__ __host__ KDTreeNode(const KDTreeNode& g)
 	{
 		leftChild = g.leftChild; rightChild = g.rightChild; splitAxis = g.splitAxis; triangleIndex = g.triangleIndex;
-		triangleNumber = g.triangleNumber; splitPos = g.splitPos; nodeAABB = g.nodeAABB;
+		triangleNumber = g.triangleNumber; splitPos = g.splitPos; nodeAABB = g.nodeAABB; depth = g.depth;
 	}
 	int leftChild;
 	int rightChild;
@@ -392,6 +392,7 @@ struct KDTreeNode
 	int triangleIndex;
 	int triangleNumber;
 	float splitPos;
+	int depth;
 	AABB nodeAABB;
 };
 
@@ -439,6 +440,7 @@ __global__ void InitRoot(int nTri, KDTreeNode* nodes, unsigned int* nodesPtr, in
 	n.triangleIndex = 0;
 	n.triangleNumber = nTri;
 	n.nodeAABB = aabb;
+	n.depth = 0;
 	DeviceVector<KDTreeNode>::push_back(nodes, nodesPtr, n);
 	*(tnaPtr) = nTri;
 
@@ -463,6 +465,10 @@ __global__ void MidSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 	int leftid;
 	int rightid;
 	float sp;
+
+	if (nodes[id].depth > KDTREE_MAX_DEPTH)
+		return;
+
 	//KDTreeNode currentNode(nodes[id]);
 	vec3 volume = nodes[id].nodeAABB.bounds[1] - nodes[id].nodeAABB.bounds[0];
 	if (volume.x >= volume.y && volume.x >= volume.z)// split x
@@ -475,6 +481,7 @@ __global__ void MidSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 		atarashiiNode.nodeAABB = nodes[id].nodeAABB;
 		atarashiiNode.nodeAABB.bounds[1].x = sp;
 		leftid = DeviceVector<KDTreeNode>::push_back(nodes, nodesPtr, atarashiiNode);
+		
 		nodes[id].leftChild = leftid;
 
 		atarashiiNode.nodeAABB.bounds[1].x = nodes[id].nodeAABB.bounds[1].x;
@@ -571,6 +578,10 @@ __global__ void MidSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 	//printf("leftcount=%d\nrightcount=%d\n", leftcount, rightcount);
 	nodes[leftid].triangleNumber = leftcount;
 	nodes[rightid].triangleNumber = rightcount;
+
+	nodes[leftid].depth = nodes[id].depth + 1;
+	nodes[rightid].depth = nodes[id].depth + 1;
+
 	//printf("node %d was splited with left = %d and right = %d with sp=%.5f tna=%d\n", id, leftcount, rightcount, sp, *tnaPtr);
 	// add to nextList
 	if (leftcount > KDTREE_THRESHOLD * 2)
@@ -594,6 +605,8 @@ __global__ void SAHSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 	int rightid;
 	float tpos;
 	//KDTreeNode currentNode(nodes[id]);
+	if (nodes[id].depth > KDTREE_MAX_DEPTH)
+		return;
 	vec3 volume = nodes[id].nodeAABB.bounds[1] - nodes[id].nodeAABB.bounds[0];
 	if (volume.x >= volume.y && volume.x >= volume.z)// split x
 	{
@@ -762,6 +775,9 @@ __global__ void SAHSplitNode(Triangle* tri, AABB* aabb, int nTri, KDTreeNode* no
 	nodes[rightid].triangleNumber = rightcount;
 	//printf("node %d was splited with left = %d and right = %d with tna=%d\n", id, leftcount, rightcount, *tnaPtr);
 	// add to nextList
+
+	nodes[leftid].depth = nodes[id].depth+1;
+	nodes[rightid].depth = nodes[id].depth+1;
 
 	if (leftcount > KDTREE_THRESHOLD)
 		DeviceVector<int>::push_back(smallList, smallListPtr, leftid);
@@ -1349,13 +1365,14 @@ Sphere spheres[] =
 	//Sphere(vec3(-30, 8, 0), 8, Material(TRANS,  vec3(1))),
 	//Sphere(vec3(-10, 8, 0), 8, Material(DIFF,  vec3(1))),
 	//Sphere(vec3(10, 8, 0), 8, Material(SPEC,  vec3(1))),
-	Sphere(vec3(20, 0, 20), 10, Material(SPEC,  vec3(1)))
+	Sphere(vec3(0, 1000, 0), 10, Material(SPEC,  vec3(1)))
 };
 Mesh meshes[] =
 {
-	//Mesh(vec3(0,0,0), "Cornell.obj"),
+	//Mesh(vec3(0,0,0), "Cornell.obj")
+	Mesh(vec3(0,0,0), "Sponza.obj")
 	//Mesh(vec3(0,0,0), "0250.obj", Material(TRANS, vec3(1)))
-	Mesh(vec3(0,0,0), "test.obj", Material(TRANS, vec3(1)))
+	//Mesh(vec3(150,-50,150), "BigDragon.obj", Material(DIFF, vec3(1)))
 	//Mesh(vec3(0,0,0), "Cornell_Small.obj")
 	//Mesh(vec3(0,5,0), "wired_mesh.obj", Material(TRANS, vec3(1)))
 	//CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
@@ -1883,6 +1900,12 @@ Mesh meshes[] =
 		if (IsKeyDown('n'))
 		{
 			enableDrawNormal = !enableDrawNormal;
+			cudaToggle = false;
+		}
+		if (IsKeyDown('k'))
+		{
+			enableDrawKDTree = !enableDrawKDTree;
+			cudaToggle = false;
 		}
 		if (IsKeyDown('t'))
 		{
@@ -2111,6 +2134,80 @@ Mesh meshes[] =
 						glVertex3fv(value_ptr(triangles[i].nor[2] + triangles[i].pos[2]));
 						glEnd();
 					}
+				}
+				if (enableDrawKDTree)
+				{
+					glDisable(GL_LIGHTING);
+					int nodeSize = meshes[n].tree->nodes.size();
+					glLineWidth(1.0f);
+					KDTreeNode* nodes = new KDTreeNode[nodeSize];
+					meshes[n].tree->nodes.CopyToHost(nodes);
+					for (int i = 0; i < meshes[n].tree->nodes.size(); i++)
+					{
+						if (nodes[i].depth > KDTREE_MAX_DEPTH)
+							printf("WHAT %d\n", nodes[i].depth);
+						AABB box = nodes[i].nodeAABB;
+
+						vec3 corner[8];
+
+						corner[0] = { box.bounds[0].x, box.bounds[0].y, box.bounds[0].z };
+						corner[1] = { box.bounds[1].x, box.bounds[0].y, box.bounds[0].z };
+						corner[2] = { box.bounds[1].x, box.bounds[0].y, box.bounds[1].z };
+						corner[3] = { box.bounds[0].x, box.bounds[0].y, box.bounds[1].z };
+						corner[4] = { box.bounds[0].x, box.bounds[1].y, box.bounds[0].z };
+						corner[5] = { box.bounds[1].x, box.bounds[1].y, box.bounds[0].z };
+						corner[6] = { box.bounds[1].x, box.bounds[1].y, box.bounds[1].z };
+						corner[7] = { box.bounds[0].x, box.bounds[1].y, box.bounds[1].z };
+
+						glColor3f(1.0f, 1 - (i / float(nodeSize)), 0.0f);
+						glLineWidth(i / float(nodeSize));
+
+						glBegin(GL_LINES);
+
+						glVertex3f(corner[0].x, corner[0].y, corner[0].z);
+						glVertex3f(corner[1].x, corner[1].y, corner[1].z);
+
+						glVertex3f(corner[1].x, corner[1].y, corner[1].z);
+						glVertex3f(corner[2].x, corner[2].y, corner[2].z);
+
+						glVertex3f(corner[2].x, corner[2].y, corner[2].z);
+						glVertex3f(corner[3].x, corner[3].y, corner[3].z);
+
+						glVertex3f(corner[3].x, corner[3].y, corner[3].z);
+						glVertex3f(corner[0].x, corner[0].y, corner[0].z);
+
+
+
+						glVertex3f(corner[0].x, corner[0].y, corner[0].z);
+						glVertex3f(corner[4].x, corner[4].y, corner[4].z);
+
+						glVertex3f(corner[1].x, corner[1].y, corner[1].z);
+						glVertex3f(corner[5].x, corner[5].y, corner[5].z);
+
+						glVertex3f(corner[2].x, corner[2].y, corner[2].z);
+						glVertex3f(corner[6].x, corner[6].y, corner[6].z);
+
+						glVertex3f(corner[3].x, corner[3].y, corner[3].z);
+						glVertex3f(corner[7].x, corner[7].y, corner[7].z);
+
+
+
+						glVertex3f(corner[4].x, corner[4].y, corner[4].z);
+						glVertex3f(corner[5].x, corner[5].y, corner[5].z);
+
+						glVertex3f(corner[5].x, corner[5].y, corner[5].z);
+						glVertex3f(corner[6].x, corner[6].y, corner[6].z);
+
+						glVertex3f(corner[6].x, corner[6].y, corner[6].z);
+						glVertex3f(corner[7].x, corner[7].y, corner[7].z);
+
+						glVertex3f(corner[7].x, corner[7].y, corner[7].z);
+						glVertex3f(corner[4].x, corner[4].y, corner[4].z);
+
+						glEnd();
+					}
+					delete[] nodes;
+					glEnable(GL_LIGHTING);
 				}
 				glPopMatrix();
 			}

@@ -24,7 +24,7 @@ constexpr int HEIGHT = 720;
 constexpr int TRACE_SAMPLES = 1000;
 constexpr int TRACE_OUTER_LOOP_X = 4;
 constexpr int TRACE_OUTER_LOOP_Y = 3;
-constexpr float EPSILON = 1e-2;
+constexpr float EPSILON = 1e-3f;
 constexpr float INF = 3.402823466e+38F;
 constexpr int MAX_DEPTH = 5;
 constexpr int ROULETTE_DEPTH = 3;
@@ -43,7 +43,7 @@ float deltaTime = 0;
 GLuint viewGLTexture;
 cudaGraphicsResource* viewResource;
 cudaArray* viewArray;
-bool cudaToggle = true;
+bool cudaToggle = false;
 bool cudaDirty = false;
 int frame = 1;
 
@@ -62,6 +62,7 @@ bool enableSaveImage = false;
 
 // OpenGL Debug
 bool enableDrawNormal = false;
+bool enableDrawKDTree = false;
 
 // Photon
 constexpr int MAX_BUILD_PHOTON_TRHESHOLD = 5;
@@ -69,8 +70,9 @@ constexpr int MAX_PHOTONS = 10000;
 
 // KD Tree
 #define ENABLE_KDTREE 1
-constexpr int KDTREE_THRESHOLD = 32;
+constexpr int KDTREE_THRESHOLD = 16;
 constexpr int KDTREE_MAX_STACK = 1024;
+constexpr int KDTREE_MAX_DEPTH = 11;
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
 {
