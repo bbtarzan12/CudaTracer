@@ -17,6 +17,9 @@
 #include <thrust/device_vector.h>
 #include <freeimage.h>
 
+#include <imgui_impl_glut.h>
+#include <imgui_internal.h>
+
 #define gpuErrorCheck(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 
 constexpr int WIDTH = 1280;
@@ -61,17 +64,28 @@ bool enablePhoton = false;
 bool enableSaveImage = false;
 bool enableDirectLighting = true;
 constexpr bool ENABLE_SMOOTH_NORMAL = true;
+float directLightingConstant = 100.0f;
 
 // OpenGL Debug
 bool enableDrawNormal = false;
 bool enableDrawKDTree = false;
+
+// UI
+bool enableGUI = true;
+bool isSavingImage = false;
+int imageSaveSamples = 10;
+int tracingGridProgress = 0;
+float memoryAllocTime = 0;
+float renderingTime = 0;
+int objectIndex = 0;
+constexpr char* MATERIAL_TYPE_ARRAY[] = { "NONE", "DIFF", "GLOSS", "TRANS", "SPEC" };
 
 // Photon
 constexpr int MAX_BUILD_PHOTON_TRHESHOLD = 5;
 constexpr int MAX_PHOTONS = 10000;
 
 // KD Tree
-#define ENABLE_KDTREE 1
+#define ENABLE_KDTREE 0
 constexpr int KDTREE_THRESHOLD = 16;
 constexpr int KDTREE_MAX_STACK = 1024;
 constexpr int KDTREE_MAX_DEPTH = 11;

@@ -120,7 +120,7 @@ struct Camera
 	void UpdateCamera(float deltaTime)
 	{
 		vec2 input = vec2(IsKeyDown('w') ? 1 : IsKeyDown('s') ? -1 : 0, IsKeyDown('d') ? 1 : IsKeyDown('a') ? -1 : 0);
-		if (IsMouseDown(0))
+		if (IsMouseDown(1))
 			HandleRotate(deltaTime);
 		HandleMove(input, deltaTime);
 
@@ -144,7 +144,7 @@ struct Camera
 			view = viewMatrix;
 		}
 		glMultMatrixf(value_ptr(view));
-		toggleMouseMovement = IsMouseDown(0);
+		toggleMouseMovement = IsMouseDown(1);
 	}
 
 	bool toggleMouseMovement;
@@ -1377,17 +1377,17 @@ Sphere spheres[] =
 	//Sphere(vec3(0, 30, 0), 8,  Material(TRANS,  vec3(1)))
 
 	//Sphere(vec3(-30, 8, 0), 8, Material(TRANS,  vec3(1))),
-	Sphere(vec3(0, 45, 0), 1.0f, Material(TRANS,  vec3(1), vec3(2.2f, 2.2f, 2.2f)))
-	//Sphere(vec3(-10, 8, -10), 8, Material(SPEC,  vec3(1))),
-	//Sphere(vec3(-10, 8, 10), 8, Material(TRANS,  vec3(1)))
+	Sphere(vec3(0, 45, 0), 1.0f, Material(TRANS,  vec3(1), vec3(2.2f, 2.2f, 2.2f))),
+	Sphere(vec3(-10, 8, -10), 8, Material(SPEC,  vec3(1))),
+	Sphere(vec3(-10, 8, 10), 8, Material(TRANS,  vec3(1)))
 };
 Mesh meshes[] =
 {
-	//Mesh(vec3(0,0,0), "Cornell.obj", Material(DIFF))
+	Mesh(vec3(0,0,0), "Cornell.obj", Material(DIFF))
 	//Mesh(vec3(0,0,0), "Cornell_Water0.obj", Material(DIFF)),
 	//Mesh(vec3(0,0,0), "Cornell_Water1.obj", Material(SPEC)),
 	//Mesh(vec3(0,0,0), "Cornell_Water2.obj", Material(TRANS))
-	Mesh(vec3(0,0,0), "Sponza.obj")
+	//Mesh(vec3(0,0,0), "Sponza.obj")
 	//Mesh(vec3(0,0,0), "test.obj", Material(TRANS, vec3(1)))
 	//Mesh(vec3(150,-50,150), "BigDragon.obj", Material(DIFF, vec3(1)))
 	//Mesh(vec3(0,0,0), "Cornell_Small.obj")
@@ -1571,7 +1571,7 @@ __device__ Photon TraceRay(Ray ray, vec3 lightEmission, Sphere* spheres, Mesh* m
 }
 
 // Path Tracing + Photon Map
-__device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, bool directLighting, Photon* map, int maxPhotons, curandState* randState)
+__device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, bool directLighting, float directLightingConstant, Photon* map, int maxPhotons, curandState* randState)
 {
 	vec3 resultColor = vec3(0);
 	vec3 mask = vec3(1);
@@ -1643,7 +1643,7 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount
 							float radius = spheres[i].radius;
 							float cosMax = sqrt(1 - radius * radius / dot(hitPoint - lightPoint, hitPoint - lightPoint));
 							float omega = two_pi<float>() * (1 - cosMax);
-							explicitLightColor += spheres[i].material.emission * wi * omega * one_over_pi<float>() * 100.0f;
+							explicitLightColor += spheres[i].material.emission * wi * omega * one_over_pi<float>() * directLightingConstant;
 						}
 					}
 				}
@@ -1657,7 +1657,7 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount
 }
 
 // Real time + Photon Mapping Kernel
-__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, bool directLighting, int frame, Photon* map, int mapSize, cudaSurfaceObject_t surface)
+__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, bool directLighting, float directLightingConstant, int frame, Photon* map, int mapSize, cudaSurfaceObject_t surface)
 {
 	int width = camera->width;
 	int height = camera->height;
@@ -1676,7 +1676,7 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 	vec3 resultColor = vec3(0, 0, 0);
 	curand_init(WangHash(threadId) + WangHash(frame), 0, 0, &randState);
 	Ray ray = camera->GetRay(&randState, x, y, dof);
-	vec3 color = TraceRay(ray, spheres, meshes, sphereCount, meshCount, directLighting, map, mapSize, &randState);
+	vec3 color = TraceRay(ray, spheres, meshes, sphereCount, meshCount, directLighting, directLightingConstant, map, mapSize, &randState);
 	resultColor = (vec3(originColor.x, originColor.y, originColor.z) * (float)(frame - 1) + color) / (float)frame;
 	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
 }
@@ -1709,25 +1709,15 @@ __global__ void PhotonMapKernel(Camera* camera, Sphere* spheres, Mesh* meshes, i
 }
 
 // Photon Mapping Rendering Loop
-void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, bool dof, bool directLighting, Photon* map, int mapSize, cudaSurfaceObject_t surface)
+void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, bool dof, bool directLighting, float directLightingConstant, Photon* map, int mapSize, cudaSurfaceObject_t surface)
 {
 	cudaDeviceSetLimit(cudaLimitMallocHeapSize, 5000000000 * sizeof(float));
-	int progress = 0;
+	tracingGridProgress = 0;
 	for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
 	{
 		for (int j = 0; j < TRACE_OUTER_LOOP_Y; j++)
 		{
-			cudaEvent_t start, stop;
-			float elapsedTime;
-			gpuErrorCheck(cudaEventCreate(&start));
-			gpuErrorCheck(cudaEventRecord(start, 0));
-			PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, directLighting, frame, map, mapSize, surface);
-			gpuErrorCheck(cudaEventCreate(&stop));
-			gpuErrorCheck(cudaEventRecord(stop, 0));
-			gpuErrorCheck(cudaEventSynchronize(stop));
-
-			gpuErrorCheck(cudaEventElapsedTime(&elapsedTime, start, stop));
-			printf("\rTracing %d/%d  |  Elapsed time : %f ms", ++progress, TRACE_OUTER_LOOP_X * TRACE_OUTER_LOOP_Y, elapsedTime);
+			PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, directLighting, directLightingConstant, frame, map, mapSize, surface);
 			gpuErrorCheck(cudaDeviceSynchronize());
 		}
 	}
@@ -1824,7 +1814,6 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 	int height = camera->height;
 
 	cudaEvent_t start, stop;
-	float memoryAllocTime, renderingTime;
 	gpuErrorCheck(cudaEventCreate(&start));
 	gpuErrorCheck(cudaEventRecord(start, 0));
 
@@ -1887,7 +1876,7 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 
 	gpuErrorCheck(cudaEventCreate(&start));
 	gpuErrorCheck(cudaEventRecord(start, 0));
-	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, frame, dof, directLighting, cudaPhotonMap, photonMapSize, surface);
+	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, frame, dof, directLighting, directLightingConstant, cudaPhotonMap, photonMapSize, surface);
 	gpuErrorCheck(cudaDeviceSynchronize());
 	gpuErrorCheck(cudaEventCreate(&stop));
 	gpuErrorCheck(cudaEventRecord(stop, 0));
@@ -1895,7 +1884,6 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 	gpuErrorCheck(cudaEventElapsedTime(&renderingTime, start, stop));
 	gpuErrorCheck(cudaEventDestroy(start));
 	gpuErrorCheck(cudaEventDestroy(stop));
-	printf("\rRendering End(%d) | Memory Allocation Time : %f ms | Rendering time : %f ms | %f ms\n", frame, memoryAllocTime, renderingTime, memoryAllocTime + renderingTime);
 
 	if (photon)
 	{
@@ -1988,6 +1976,12 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 			printf("Camera Position : %f %f %f\n", camera->position.x, camera->position.y, camera->position.z);
 			printf("Pitch Yaw : %f %f\n", camera->pitch, camera->yaw);
 		}
+		if (IsKeyDown('u'))
+		{
+			enableGUI = !enableGUI;
+		}
+		ImGuiIO& io = ImGui::GetIO();
+		io.AddInputCharacter(key);
 		glutPostRedisplay();
 	}
 	void KeyboardUp(unsigned char key, int x, int y)
@@ -1999,6 +1993,8 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 	}
 	void Special(int key, int x, int y)
 	{
+		ImGuiIO& io = ImGui::GetIO();
+		io.AddInputCharacter(key);
 		glutPostRedisplay();
 	}
 	void SpecialUp(int key, int x, int y)
@@ -2010,6 +2006,20 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 		mousePos[0] = x;
 		mousePos[1] = y;
 		mouseState[button] = !state;
+
+		ImGuiIO& io = ImGui::GetIO();
+		io.MousePos = ImVec2(float(x), float(y));
+
+		if (state == GLUT_DOWN && (button == GLUT_LEFT_BUTTON))
+			io.MouseDown[0] = true;
+		else
+			io.MouseDown[0] = false;
+
+		if (state == GLUT_DOWN && (button == GLUT_RIGHT_BUTTON))
+			io.MouseDown[1] = true;
+		else
+			io.MouseDown[1] = false;
+
 		glutPostRedisplay();
 	}
 	void MouseWheel(int button, int dir, int x, int y)
@@ -2030,6 +2040,8 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 	{
 		mousePos[0] = x;
 		mousePos[1] = y;
+		ImGuiIO& io = ImGui::GetIO();
+		io.MousePos = ImVec2(float(x), float(y));
 		glutPostRedisplay();
 	}
 	void Reshape(int w, int h)
@@ -2047,6 +2059,8 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 	{
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		camera->UpdateCamera(deltaTime);
+
+		// OpenGL Draw
 		if (cudaToggle)
 		{
 			int width = camera->width;
@@ -2064,10 +2078,10 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 			{
 				if (cudaDirty)
 				{
-					frame = 1;
+					frame = 0;
 					cudaDirty = false;
 				}
-				RenderRealTime(viewCudaSurfaceObject, enableDof, enablePhoton, enableDirectLighting, frame++);
+				RenderRealTime(viewCudaSurfaceObject, enableDof, enablePhoton, enableDirectLighting, ++frame);
 			}
 			cudaDestroySurfaceObject(viewCudaSurfaceObject);
 
@@ -2093,11 +2107,12 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 				glEnd();
 			}
 
-			if (enableSaveImage && frame >= TRACE_SAMPLES)
+			if (enableSaveImage && frame >= imageSaveSamples)
 			{
 				enableSaveImage = false;
 				cudaToggle = false;
 				cudaDirty = false;
+				isSavingImage = false;
 				frame = 1;
 
 				GLubyte *pixels = new GLubyte[3 * width*height];
@@ -2116,153 +2131,273 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 		}
 		else
 		{
-			int size = sizeof(spheres) / sizeof(Sphere);
-			for (int n = 0; n < size; n++)
+			// Draw Opengl
 			{
-				glPushMatrix();
-				glTranslatef(spheres[n].position.x, spheres[n].position.y, spheres[n].position.z);
-				glColor3fv(value_ptr(spheres[n].material.color));
-				int i, j;
-				int lats = 50;
-				int longs = 50;
-				float radius = spheres[n].radius;
-				for (i = 0; i <= lats; i++)
+				int size = sizeof(spheres) / sizeof(Sphere);
+				for (int n = 0; n < size; n++)
 				{
-					float lat0 = pi<float>() * (-float(0.5) + (float)(i - 1) / lats);
-					float z0 = radius * sin(lat0);
-					float zr0 = radius * cos(lat0);
-
-					float lat1 = pi<float>() * (-float(0.5) + (float)i / lats);
-					float z1 = radius * sin(lat1);
-					float zr1 = radius * cos(lat1);
-
-					glBegin(GL_QUAD_STRIP);
-					for (j = 0; j <= longs; j++)
+					glPushMatrix();
+					glTranslatef(spheres[n].position.x, spheres[n].position.y, spheres[n].position.z);
+					glColor3fv(value_ptr(spheres[n].material.color));
+					int i, j;
+					int lats = 50;
+					int longs = 50;
+					float radius = spheres[n].radius;
+					for (i = 0; i <= lats; i++)
 					{
-						float lng = 2 * pi<float>() * (float)(j - 1) / longs;
-						float x = cos(lng);
-						float y = sin(lng);
-						glNormal3f(x * zr1, y * zr1, z1);
-						glVertex3f(x * zr1, y * zr1, z1);
-						glNormal3f(x * zr0, y * zr0, z0);
-						glVertex3f(x * zr0, y * zr0, z0);
+						float lat0 = pi<float>() * (-float(0.5) + (float) (i - 1) / lats);
+						float z0 = radius * sin(lat0);
+						float zr0 = radius * cos(lat0);
+
+						float lat1 = pi<float>() * (-float(0.5) + (float) i / lats);
+						float z1 = radius * sin(lat1);
+						float zr1 = radius * cos(lat1);
+
+						glBegin(GL_QUAD_STRIP);
+						for (j = 0; j <= longs; j++)
+						{
+							float lng = 2 * pi<float>() * (float) (j - 1) / longs;
+							float x = cos(lng);
+							float y = sin(lng);
+							glNormal3f(x * zr1, y * zr1, z1);
+							glVertex3f(x * zr1, y * zr1, z1);
+							glNormal3f(x * zr0, y * zr0, z0);
+							glVertex3f(x * zr0, y * zr0, z0);
+						}
+						glEnd();
 					}
-					glEnd();
+					glPopMatrix();
 				}
-				glPopMatrix();
-			}
-			size = sizeof(meshes) / sizeof(Mesh);
-			for (int n = 0; n < size; n++)
-			{
-				glPushMatrix();
-				glTranslatef(meshes[n].position.x, meshes[n].position.y, meshes[n].position.z);
-				Triangle* triangles = meshes[n].triangles;
-				for (int i = 0; i < meshes[n].count; i++)
+				size = sizeof(meshes) / sizeof(Mesh);
+				for (int n = 0; n < size; n++)
 				{
-					glColor3fv(value_ptr(triangles[i].material.color));
-					vec3 p0 = triangles[i].pos[0];
-					vec3 p1 = triangles[i].pos[1];
-					vec3 p2 = triangles[i].pos[2];
-
-					vec3 normal = cross((p2 - p0), (p1 - p0));
-					normal = normalize(normal);
-					glBegin(GL_TRIANGLE_STRIP);
-					glNormal3fv(value_ptr(normal));
-					glVertex3fv(value_ptr(p0));
-					glVertex3fv(value_ptr(p1));
-					glVertex3fv(value_ptr(p2));
-					glEnd();
-				
-					if (enableDrawNormal)
+					glPushMatrix();
+					glTranslatef(meshes[n].position.x, meshes[n].position.y, meshes[n].position.z);
+					Triangle* triangles = meshes[n].triangles;
+					for (int i = 0; i < meshes[n].count; i++)
 					{
+						glColor3fv(value_ptr(triangles[i].material.color));
+						vec3 p0 = triangles[i].pos[0];
+						vec3 p1 = triangles[i].pos[1];
+						vec3 p2 = triangles[i].pos[2];
+
+						vec3 normal = cross((p2 - p0), (p1 - p0));
+						normal = normalize(normal);
+						glBegin(GL_TRIANGLE_STRIP);
+						glNormal3fv(value_ptr(normal));
+						glVertex3fv(value_ptr(p0));
+						glVertex3fv(value_ptr(p1));
+						glVertex3fv(value_ptr(p2));
+						glEnd();
+
+						if (enableDrawNormal)
+						{
+							glLineWidth(1.0f);
+							glColor3f(1.0f, 1.0f, 1.0f);
+							glBegin(GL_LINES);
+							glVertex3fv(value_ptr(triangles[i].pos[0]));
+							glVertex3fv(value_ptr(triangles[i].nor[0] + triangles[i].pos[0]));
+							glVertex3fv(value_ptr(triangles[i].pos[1]));
+							glVertex3fv(value_ptr(triangles[i].nor[1] + triangles[i].pos[1]));
+							glVertex3fv(value_ptr(triangles[i].pos[2]));
+							glVertex3fv(value_ptr(triangles[i].nor[2] + triangles[i].pos[2]));
+							glEnd();
+						}
+					}
+					if (enableDrawKDTree)
+					{
+						glDisable(GL_LIGHTING);
+						int nodeSize = meshes[n].tree->nodes.size();
 						glLineWidth(1.0f);
-						glColor3f(1.0f, 1.0f, 1.0f);
-						glBegin(GL_LINES);
-						glVertex3fv(value_ptr(triangles[i].pos[0]));
-						glVertex3fv(value_ptr(triangles[i].nor[0] + triangles[i].pos[0]));
-						glVertex3fv(value_ptr(triangles[i].pos[1]));
-						glVertex3fv(value_ptr(triangles[i].nor[1] + triangles[i].pos[1]));
-						glVertex3fv(value_ptr(triangles[i].pos[2]));
-						glVertex3fv(value_ptr(triangles[i].nor[2] + triangles[i].pos[2]));
-						glEnd();
+						KDTreeNode* nodes = new KDTreeNode[nodeSize];
+						meshes[n].tree->nodes.CopyToHost(nodes);
+						for (int i = 0; i < meshes[n].tree->nodes.size(); i++)
+						{
+							if (nodes[i].depth > KDTREE_MAX_DEPTH)
+								printf("WHAT %d\n", nodes[i].depth);
+							AABB box = nodes[i].nodeAABB;
+
+							vec3 corner[8];
+
+							corner[0] = { box.bounds[0].x, box.bounds[0].y, box.bounds[0].z };
+							corner[1] = { box.bounds[1].x, box.bounds[0].y, box.bounds[0].z };
+							corner[2] = { box.bounds[1].x, box.bounds[0].y, box.bounds[1].z };
+							corner[3] = { box.bounds[0].x, box.bounds[0].y, box.bounds[1].z };
+							corner[4] = { box.bounds[0].x, box.bounds[1].y, box.bounds[0].z };
+							corner[5] = { box.bounds[1].x, box.bounds[1].y, box.bounds[0].z };
+							corner[6] = { box.bounds[1].x, box.bounds[1].y, box.bounds[1].z };
+							corner[7] = { box.bounds[0].x, box.bounds[1].y, box.bounds[1].z };
+
+							glColor3f(1.0f, 1 - (i / float(nodeSize)), 0.0f);
+							glLineWidth(i / float(nodeSize));
+
+							glBegin(GL_LINES);
+
+							glVertex3f(corner[0].x, corner[0].y, corner[0].z);
+							glVertex3f(corner[1].x, corner[1].y, corner[1].z);
+
+							glVertex3f(corner[1].x, corner[1].y, corner[1].z);
+							glVertex3f(corner[2].x, corner[2].y, corner[2].z);
+
+							glVertex3f(corner[2].x, corner[2].y, corner[2].z);
+							glVertex3f(corner[3].x, corner[3].y, corner[3].z);
+
+							glVertex3f(corner[3].x, corner[3].y, corner[3].z);
+							glVertex3f(corner[0].x, corner[0].y, corner[0].z);
+
+
+
+							glVertex3f(corner[0].x, corner[0].y, corner[0].z);
+							glVertex3f(corner[4].x, corner[4].y, corner[4].z);
+
+							glVertex3f(corner[1].x, corner[1].y, corner[1].z);
+							glVertex3f(corner[5].x, corner[5].y, corner[5].z);
+
+							glVertex3f(corner[2].x, corner[2].y, corner[2].z);
+							glVertex3f(corner[6].x, corner[6].y, corner[6].z);
+
+							glVertex3f(corner[3].x, corner[3].y, corner[3].z);
+							glVertex3f(corner[7].x, corner[7].y, corner[7].z);
+
+
+
+							glVertex3f(corner[4].x, corner[4].y, corner[4].z);
+							glVertex3f(corner[5].x, corner[5].y, corner[5].z);
+
+							glVertex3f(corner[5].x, corner[5].y, corner[5].z);
+							glVertex3f(corner[6].x, corner[6].y, corner[6].z);
+
+							glVertex3f(corner[6].x, corner[6].y, corner[6].z);
+							glVertex3f(corner[7].x, corner[7].y, corner[7].z);
+
+							glVertex3f(corner[7].x, corner[7].y, corner[7].z);
+							glVertex3f(corner[4].x, corner[4].y, corner[4].z);
+
+							glEnd();
+						}
+						delete[] nodes;
+						glEnable(GL_LIGHTING);
 					}
+					glPopMatrix();
 				}
-				if (enableDrawKDTree)
-				{
-					glDisable(GL_LIGHTING);
-					int nodeSize = meshes[n].tree->nodes.size();
-					glLineWidth(1.0f);
-					KDTreeNode* nodes = new KDTreeNode[nodeSize];
-					meshes[n].tree->nodes.CopyToHost(nodes);
-					for (int i = 0; i < meshes[n].tree->nodes.size(); i++)
-					{
-						if (nodes[i].depth > KDTREE_MAX_DEPTH)
-							printf("WHAT %d\n", nodes[i].depth);
-						AABB box = nodes[i].nodeAABB;
-
-						vec3 corner[8];
-
-						corner[0] = { box.bounds[0].x, box.bounds[0].y, box.bounds[0].z };
-						corner[1] = { box.bounds[1].x, box.bounds[0].y, box.bounds[0].z };
-						corner[2] = { box.bounds[1].x, box.bounds[0].y, box.bounds[1].z };
-						corner[3] = { box.bounds[0].x, box.bounds[0].y, box.bounds[1].z };
-						corner[4] = { box.bounds[0].x, box.bounds[1].y, box.bounds[0].z };
-						corner[5] = { box.bounds[1].x, box.bounds[1].y, box.bounds[0].z };
-						corner[6] = { box.bounds[1].x, box.bounds[1].y, box.bounds[1].z };
-						corner[7] = { box.bounds[0].x, box.bounds[1].y, box.bounds[1].z };
-
-						glColor3f(1.0f, 1 - (i / float(nodeSize)), 0.0f);
-						glLineWidth(i / float(nodeSize));
-
-						glBegin(GL_LINES);
-
-						glVertex3f(corner[0].x, corner[0].y, corner[0].z);
-						glVertex3f(corner[1].x, corner[1].y, corner[1].z);
-
-						glVertex3f(corner[1].x, corner[1].y, corner[1].z);
-						glVertex3f(corner[2].x, corner[2].y, corner[2].z);
-
-						glVertex3f(corner[2].x, corner[2].y, corner[2].z);
-						glVertex3f(corner[3].x, corner[3].y, corner[3].z);
-
-						glVertex3f(corner[3].x, corner[3].y, corner[3].z);
-						glVertex3f(corner[0].x, corner[0].y, corner[0].z);
-
-
-
-						glVertex3f(corner[0].x, corner[0].y, corner[0].z);
-						glVertex3f(corner[4].x, corner[4].y, corner[4].z);
-
-						glVertex3f(corner[1].x, corner[1].y, corner[1].z);
-						glVertex3f(corner[5].x, corner[5].y, corner[5].z);
-
-						glVertex3f(corner[2].x, corner[2].y, corner[2].z);
-						glVertex3f(corner[6].x, corner[6].y, corner[6].z);
-
-						glVertex3f(corner[3].x, corner[3].y, corner[3].z);
-						glVertex3f(corner[7].x, corner[7].y, corner[7].z);
-
-
-
-						glVertex3f(corner[4].x, corner[4].y, corner[4].z);
-						glVertex3f(corner[5].x, corner[5].y, corner[5].z);
-
-						glVertex3f(corner[5].x, corner[5].y, corner[5].z);
-						glVertex3f(corner[6].x, corner[6].y, corner[6].z);
-
-						glVertex3f(corner[6].x, corner[6].y, corner[6].z);
-						glVertex3f(corner[7].x, corner[7].y, corner[7].z);
-
-						glVertex3f(corner[7].x, corner[7].y, corner[7].z);
-						glVertex3f(corner[4].x, corner[4].y, corner[4].z);
-
-						glEnd();
-					}
-					delete[] nodes;
-					glEnable(GL_LIGHTING);
-				}
-				glPopMatrix();
 			}
+
+		}
+
+
+		int width = camera->width;
+		int height = camera->height;
+		ImGui_ImplGLUT_NewFrame(width, height);
+
+		// UI
+		if (enableGUI)
+		{
+			ImGui::Begin("Cuda Tracer", nullptr, ImVec2(0,0), -1.0f, ImGuiWindowFlags_AlwaysAutoResize);
+			ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiSetCond_Once);
+			ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+			if (cudaToggle)
+			{
+				ImGui::Text("Current Frame : %d", frame);
+
+				if (isSavingImage)
+				{
+					ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+					ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+				}
+
+				if (ImGui::Button("Save Image"))
+				{
+					GLubyte *pixels = new GLubyte[3 * width*height];
+					glPixelStorei(GL_PACK_ALIGNMENT, 1);
+					glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+					FIBITMAP* image = FreeImage_ConvertFromRawBits(pixels, width, height, 3 * width, 24, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, false);
+					SwapRedBlue32(image);
+					stringstream ss;
+					ss << "Result_" << frame << ".png";
+					FreeImage_Save(FIF_PNG, image, ss.str().c_str(), 0);
+					FreeImage_Unload(image);
+					delete pixels;
+				}
+				ImGui::Text("Memory Allocation Time : %f ms", memoryAllocTime);
+				ImGui::Text("Rendering time : %f ms", renderingTime);
+				ImGui::Text("Total Time : %f ms", memoryAllocTime + renderingTime);
+
+				if (ImGui::Checkbox("Enable Dof", &enableDof))
+					cudaDirty = true;
+				if (enableDof)
+				{
+					if (ImGui::SliderFloat("Focal Distance", &(camera->focalDistance), EPSILON, 500))
+						cudaDirty = true;
+					if (ImGui::SliderFloat("Aperture", &(camera->aperture), EPSILON, 50))
+						cudaDirty = true;
+				}
+				if (ImGui::Checkbox("Enable Direct Lighting", &enableDirectLighting))
+					cudaDirty = true;
+				if (ImGui::Checkbox("Enable Photon Mapping", &enablePhoton))
+					cudaDirty = true;
+				if (ImGui::SliderFloat("Direct Lighting Weight", &directLightingConstant, EPSILON, 1000.0f))
+					cudaDirty = true;
+
+				if (isSavingImage)
+				{
+					ImGui::PopItemFlag();
+					ImGui::PopStyleVar();
+				}
+			}
+			else
+			{
+				ImGui::InputInt("Image Samples", &imageSaveSamples, 1, 100);
+				ImGui::SameLine();
+				if (ImGui::Button("Save Image"))
+				{
+					enableSaveImage = true;
+					frame = 1;
+					cudaDirty = false;
+					cudaToggle = true;
+					isSavingImage = true;
+				}
+
+				if (ImGui::Checkbox("Draw Normal", &enableDrawNormal))
+					cudaDirty = true;
+				if (ImGui::Checkbox("Draw Debug KDTree AABBox", &enableDrawKDTree))
+					cudaDirty = true;
+			}
+
+			if (!isSavingImage)
+			{
+				int sphereCount = sizeof(spheres) / sizeof(Sphere);
+				int meshCount = sizeof(meshes) / sizeof(Mesh);
+
+				if (ImGui::CollapsingHeader("Objects"))
+				{
+					ImGui::Text("Spheres : %d", sphereCount);
+					ImGui::Text("Meshes : %d", meshCount);
+					ImGui::SliderInt("Current Object", &objectIndex, 0, sphereCount + meshCount - 1);
+
+					if (objectIndex < sphereCount)
+					{
+						if (ImGui::SliderFloat3("Position", value_ptr(spheres[objectIndex].position), -100.0f, 100.0f))
+							cudaDirty = true;
+						if (ImGui::SliderFloat("Radius", &(spheres[objectIndex].radius), EPSILON, 100))
+							cudaDirty = true;
+						if (ImGui::ListBox("Material Type", (int*)&(spheres[objectIndex].material.type), MATERIAL_TYPE_ARRAY, IM_ARRAYSIZE(MATERIAL_TYPE_ARRAY)))
+							cudaDirty = true;
+						if (ImGui::SliderFloat3("Color", value_ptr(spheres[objectIndex].material.color), 0.0f, 1.0f))
+							cudaDirty = true;
+						if (ImGui::SliderFloat3("Emission", value_ptr(spheres[objectIndex].material.emission), 0.0f, 10.0f))
+							cudaDirty = true;
+					}
+					else
+					{
+						int meshIndex = objectIndex - sphereCount;
+						ImGui::Text("Triangles : %d", meshes[meshIndex].count);
+						if (ImGui::SliderFloat3("Position", value_ptr(meshes[meshIndex].position), -100.0f, 100.0f))
+							cudaDirty = true;
+					}
+				}
+			}
+			ImGui::End();
+			ImGui::Render();
 		}
 		glutSwapBuffers();
 	}
@@ -2311,6 +2446,16 @@ int main(int argc, char **argv)
 	glClearColor(0.6, 0.65, 0.85, 0);
 
 	FreeImage_Initialise();
+
+	// imgui
+	{
+		ImGui::CreateContext();
+		ImGuiIO& io = ImGui::GetIO(); (void) io;
+
+		ImGui_ImplGLUT_Init();
+
+		ImGui::StyleColorsDark();
+	}
 
 	// Init
 
@@ -2378,16 +2523,15 @@ int main(int argc, char **argv)
 		delete cpuHDRmap;
 	}
 
-	{
+
 #if ENABLE_KDTREE
-		int mesheCount = sizeof(meshes) / sizeof(Mesh);
-		for (int i = 0; i < mesheCount; i++)
-		{
-			meshes[i].tree = new KDTree(meshes[i].triangles, meshes[i].count);
-			meshes[i].tree->Build();
-		}
-#endif
+	int mesheCount = sizeof(meshes) / sizeof(Mesh);
+	for (int i = 0; i < mesheCount; i++)
+	{
+		meshes[i].tree = new KDTree(meshes[i].triangles, meshes[i].count);
+		meshes[i].tree->Build();
 	}
+#endif
 
 	glutKeyboardFunc(Keyboard);
 	glutKeyboardUpFunc(KeyboardUp);
@@ -2401,6 +2545,10 @@ int main(int argc, char **argv)
 	glutMotionFunc(Motion);
 	glutDisplayFunc(Display);
 	glutMainLoop();
+
+	// Cleanup
 	cudaDeviceReset();
+	ImGui_ImplGLUT_Shutdown();
+	ImGui::DestroyContext();
 	return 0;
 }
