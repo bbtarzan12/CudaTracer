@@ -21,7 +21,7 @@
 
 constexpr int WIDTH = 1280;
 constexpr int HEIGHT = 720;
-constexpr int TRACE_SAMPLES = 1000;
+constexpr int TRACE_SAMPLES = 10;
 constexpr int TRACE_OUTER_LOOP_X = 4;
 constexpr int TRACE_OUTER_LOOP_Y = 3;
 constexpr float EPSILON = 1e-3f;
@@ -59,6 +59,8 @@ float4* cudaHDRmap;
 bool enableDof = false;
 bool enablePhoton = false;
 bool enableSaveImage = false;
+bool enableDirectLighting = true;
+constexpr bool ENABLE_SMOOTH_NORMAL = true;
 
 // OpenGL Debug
 bool enableDrawNormal = false;
