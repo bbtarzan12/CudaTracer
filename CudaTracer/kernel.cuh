@@ -33,7 +33,6 @@ constexpr int MAX_DEPTH = 5;
 constexpr int ROULETTE_DEPTH = 3;
 constexpr bool ENABLE_SURFACE_ACNE = false;
 
-
 using namespace glm;
 using namespace std;
 
@@ -42,13 +41,21 @@ enum MaterialType { NONE, DIFF, GLOSS, TRANS, SPEC };
 int oldTimeSinceStart = 0;
 float deltaTime = 0;
 
+
+// Animation
+int animationLength = 1;
+int meshesCount = 0;
+int spheresCount = 0;
+bool isLoaded = false;
+
 // RealTime
 GLuint viewGLTexture;
 cudaGraphicsResource* viewResource;
 cudaArray* viewArray;
 bool cudaToggle = false;
 bool cudaDirty = false;
-int frame = 1;
+int frame = 0;
+int samplePerFrame = 1;
 
 // HDR Texture
 constexpr char* HDR_FILE_NAME = "reading_room_4k.hdr";
@@ -85,10 +92,10 @@ constexpr int MAX_BUILD_PHOTON_TRHESHOLD = 5;
 constexpr int MAX_PHOTONS = 10000;
 
 // KD Tree
-#define ENABLE_KDTREE 0
+#define ENABLE_KDTREE 1
 constexpr int KDTREE_THRESHOLD = 16;
 constexpr int KDTREE_MAX_STACK = 1024;
-constexpr int KDTREE_MAX_DEPTH = 11;
+constexpr int KDTREE_MAX_DEPTH = 10;
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
 {

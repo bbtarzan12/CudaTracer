@@ -46,14 +46,14 @@ struct Camera
 	__host__ __device__ Camera()
 	{
 		proj = glm::mat4(1.0f);
-		position = glm::vec3(0.0f, 46.0f, 126.0f);
+		position = glm::vec3(16.250732f, 24.659492f, 58.044987f);
 		fov = 70.0f;
 		nearPlane = 0.1f;
 		farPlane = 1000.0f;
 		moveSpeed = 25.0f;
 		mouseSpeed = 10.0f;
-		pitch = 0.0f;
-		yaw = 180.0f;
+		pitch = -17.330000f;
+		yaw = 180.350021f;
 		view = mat4(0);
 		proj = mat4(0);
 		aperture = 0;
@@ -347,7 +347,7 @@ struct AABB
 	__device__ __host__ AABB()
 	{
 		bounds[0] = vec3(0);
-		bounds[1] = vec3(1);
+		bounds[1] = vec3(0);
 	}
 	__device__ __host__ AABB(vec3 min, vec3 max)
 	{
@@ -996,7 +996,7 @@ struct KDTree
 		h_Triangles = tri;
 		nTriangle = n;
 		rootAABB = AABB(h_Triangles, nTriangle);
-		printf("Root AABB Size : Min : %f %f %f | Max : %f %f %f\n", rootAABB.bounds[0].x, rootAABB.bounds[0].y, rootAABB.bounds[0].z, rootAABB.bounds[1].x, rootAABB.bounds[1].y, rootAABB.bounds[1].z);
+		//printf("Root AABB Size : Min : %f %f %f | Max : %f %f %f\n", rootAABB.bounds[0].x, rootAABB.bounds[0].y, rootAABB.bounds[0].z, rootAABB.bounds[1].x, rootAABB.bounds[1].y, rootAABB.bounds[1].z);
 	}
 	~KDTree() { freeMemory(); }
 	void Build()
@@ -1005,16 +1005,16 @@ struct KDTree
 
 		allocateMemory();
 
-		cout << "memcpy on gpu" << endl;
+		//cout << "memcpy on gpu" << endl;
 		// calculate AABB
 		CreateAABB << <blocksize, 256 >> > (nTriangle, d_Triangles, d_AABB);
 
 		MidSplit();
 		SAHSplit();
 
-		cout << "gpu kdtree debug info:" << endl;
-		cout << nodes.size() << endl;
-		cout << triangleNodeAssociation.size() << endl;
+		//cout << "gpu kdtree debug info:" << endl;
+		//cout << nodes.size() << endl;
+		//cout << triangleNodeAssociation.size() << endl;
 	}
 
 	AABB rootAABB;
@@ -1046,7 +1046,6 @@ private:
 	}
 	void freeMemory()
 	{
-		printf("KD Tree Free\n");
 		gpuErrorCheck(cudaFree(d_Triangles));
 		gpuErrorCheck(cudaFree(d_AABB));
 	}
@@ -1061,16 +1060,11 @@ private:
 		float minz = thrust::transform_reduce(thrustPtr, thrustPtr + nTriangle, MinZ(), 0, thrust::minimum<float>());
 		gpuErrorCheck(cudaDeviceSynchronize());
 
-		AABB tmp;
-
-		tmp.bounds[0] = vec3(minx, miny, minz);
-		tmp.bounds[1] = vec3(maxx, maxy, maxz);
-
-		return tmp;
+		return AABB(vec3(minx, miny, minz), vec3(maxx, maxy, maxz));
 	}
 	void MidSplit()
 	{
-		InitRoot << <1, 1 >> > (nTriangle, nodes.data, nodes.d_ptr, activeList.data, activeList.d_ptr, nextList.d_ptr, smallList.d_ptr, triangleNodeAssociation.d_ptr, rootAABB);
+		InitRoot << <1, 1 >> > (nTriangle, nodes.data, nodes.d_ptr, activeList.data, activeList.d_ptr, nextList.d_ptr, smallList.d_ptr, triangleNodeAssociation.d_ptr, rootAABB);		gpuErrorCheck(cudaDeviceSynchronize());
 		gpuErrorCheck(cudaDeviceSynchronize());
 
 		CopyTriangle << <(nTriangle + 255) / 256, 256 >> > (triangleNodeAssociation.data, nTriangle);
@@ -1083,19 +1077,19 @@ private:
 			int start = triangleNodeAssociation.size();
 			triangleNodeAssociationHelper.h_clear();
 			MidSplitNode << <(activeList.size() + 255) / 256, 256 >> > (d_Triangles, d_AABB, nTriangle,
-				nodes.data,
-				nodes.d_ptr,
-				activeList.data,
-				activeList.d_ptr,
-				nextList.data,
-				nextList.d_ptr,
-				smallList.data,
-				smallList.d_ptr,
-				triangleNodeAssociation.data,
-				triangleNodeAssociation.d_ptr,
-				triangleNodeAssociationHelper.data,
-				triangleNodeAssociationHelper.d_ptr,
-				start);
+																		nodes.data,
+																		nodes.d_ptr,
+																		activeList.data,
+																		activeList.d_ptr,
+																		nextList.data,
+																		nextList.d_ptr,
+																		smallList.data,
+																		smallList.d_ptr,
+																		triangleNodeAssociation.data,
+																		triangleNodeAssociation.d_ptr,
+																		triangleNodeAssociationHelper.data,
+																		triangleNodeAssociationHelper.d_ptr,
+																		start);
 			gpuErrorCheck(cudaDeviceSynchronize());
 			int end = triangleNodeAssociation.size();
 			int endnode = nodes.size() - 1;
@@ -1125,17 +1119,17 @@ private:
 				int start = triangleNodeAssociation.size();
 				triangleNodeAssociationHelper.h_clear();
 				SAHSplitNode << <(smallList.size() + 255) / 256, 256 >> > (d_Triangles, d_AABB, nTriangle,
-					nodes.data,
-					nodes.d_ptr,
-					smallList.data,
-					smallList.d_ptr,
-					nextList.data,
-					nextList.d_ptr,
-					triangleNodeAssociation.data,
-					triangleNodeAssociation.d_ptr,
-					triangleNodeAssociationHelper.data,
-					triangleNodeAssociationHelper.d_ptr,
-					start);
+																		   nodes.data,
+																		   nodes.d_ptr,
+																		   smallList.data,
+																		   smallList.d_ptr,
+																		   nextList.data,
+																		   nextList.d_ptr,
+																		   triangleNodeAssociation.data,
+																		   triangleNodeAssociation.d_ptr,
+																		   triangleNodeAssociationHelper.data,
+																		   triangleNodeAssociationHelper.d_ptr,
+																		   start);
 				gpuErrorCheck(cudaDeviceSynchronize());
 				int end = triangleNodeAssociation.size();
 				int endnode = nodes.size() - 1;
@@ -1176,7 +1170,6 @@ struct Mesh
 		std::vector<tinyobj::material_t> obj_materials;
 		std::vector<Material> materials;
 
-		printf("Loading %s...\n", fileName);
 		std::string err;
 		bool ret = tinyobj::LoadObj(&attrib, &obj_shapes, &obj_materials, &err, inputFile.c_str(), mtlBasePath.c_str());
 
@@ -1328,79 +1321,11 @@ struct Mesh
 
 #pragma region Scene
 
-Mesh CreateBox(vec3 pos, vec3 halfExtents, Material material)
-{
-	float halfWidth = halfExtents[0];
-	float halfHeight = halfExtents[1];
-	float halfDepth = halfExtents[2];
-
-	vec3 vertices[8] =
-	{
-		vec3(halfWidth, halfHeight, halfDepth),
-		vec3(-halfWidth, halfHeight, halfDepth),
-		vec3(halfWidth, -halfHeight, halfDepth),
-		vec3(-halfWidth, -halfHeight, halfDepth),
-		vec3(halfWidth, halfHeight, -halfDepth),
-		vec3(-halfWidth, halfHeight, -halfDepth),
-		vec3(halfWidth, -halfHeight, -halfDepth),
-		vec3(-halfWidth, -halfHeight, -halfDepth)
-	};
-
-	static int indices[36] =
-	{
-		0, 1, 2, 3, 2, 1, 4, 0, 6,
-		6, 0, 2, 5, 1, 4, 4, 1, 0,
-		7, 3, 1, 7, 1, 5, 5, 4, 7,
-		7, 4, 6, 7, 2, 3, 7, 6, 2
-	};
-
-	std::vector<Triangle> triangles;
-
-	for (int i = 0; i < 36; i += 3)
-	{
-		//triangles.push_back(Triangle(vertices[indices[i]], vertices[indices[i + 1]], vertices[indices[i + 2]], material));
-	}
-
-	return Mesh(pos, triangles.data(), 12, material);
-}
-
 dim3 block, grid;
 Camera* camera;
 
-Sphere spheres[] =
-{
-	//Sphere(vec3(20, 10, 14), 8, Material(TRANS,  vec3(1))),
-	//Sphere(vec3(-14, 8, -20), 8, Material(DIFF,  vec3(1))),
-	//Sphere(vec3(-14, 8, 14), 8, Material(SPEC,  vec3(1))),
-	//Sphere(vec3(14, 8, -14), 8, Material(GLOSS,  vec3(1)))
-	//Sphere(vec3(0, 65, 0), 8, Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
-	//Sphere(vec3(0, 30, 0), 8,  Material(TRANS,  vec3(1)))
-
-	//Sphere(vec3(-30, 8, 0), 8, Material(TRANS,  vec3(1))),
-	Sphere(vec3(0, 45, 0), 1.0f, Material(TRANS,  vec3(1), vec3(2.2f, 2.2f, 2.2f))),
-	Sphere(vec3(-10, 8, -10), 8, Material(SPEC,  vec3(1))),
-	Sphere(vec3(-10, 8, 10), 8, Material(TRANS,  vec3(1)))
-};
-Mesh meshes[] =
-{
-	Mesh(vec3(0,0,0), "Cornell.obj", Material(DIFF))
-	//Mesh(vec3(0,0,0), "Cornell_Water0.obj", Material(DIFF)),
-	//Mesh(vec3(0,0,0), "Cornell_Water1.obj", Material(SPEC)),
-	//Mesh(vec3(0,0,0), "Cornell_Water2.obj", Material(TRANS))
-	//Mesh(vec3(0,0,0), "Sponza.obj")
-	//Mesh(vec3(0,0,0), "test.obj", Material(TRANS, vec3(1)))
-	//Mesh(vec3(150,-50,150), "BigDragon.obj", Material(DIFF, vec3(1)))
-	//Mesh(vec3(0,0,0), "Cornell_Small.obj")
-	//Mesh(vec3(0,5,0), "wired_mesh.obj", Material(TRANS, vec3(1)))
-	//CreateBox(vec3(0, 30, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75), vec3(2.2, 2.2, 2.2))),
-	//Mesh(vec3(0, 0, 0), "board.obj", Material(DIFF))
-	//Mesh(vec3(0, 3, 0), "Crystal_Low.obj", Material(TRANS)),
-	////CreateBox(vec3(0, 0, 0), vec3(30, 1, 30), Material(DIFF, vec3(0.75, 0.75, 0.75))),
-	//CreateBox(vec3(30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.0, 0.0, 0.75))),
-	//CreateBox(vec3(-30, 15, 0), vec3(1, 15, 30), Material(DIFF, vec3(0.75, 0.0, 0.0))),
-	//CreateBox(vec3(0, 15, 30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75))),
-	//CreateBox(vec3(0, 15, -30), vec3(30, 15, 1), Material(DIFF, vec3(0.75, 0.75, 0.75)))
-};
+vector<Sphere> spheres;
+vector<Mesh> meshes;
 
 #pragma endregion Scene
 
@@ -1657,7 +1582,7 @@ __device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount
 }
 
 // Real time + Photon Mapping Kernel
-__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, bool directLighting, float directLightingConstant, int frame, Photon* map, int mapSize, cudaSurfaceObject_t surface)
+__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, bool directLighting, float directLightingConstant, int frame, Photon* map, int mapSize, int samplePerFrame, cudaSurfaceObject_t surface)
 {
 	int width = camera->width;
 	int height = camera->height;
@@ -1674,9 +1599,14 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 	surf2Dread(&originColor, surface, x * sizeof(float4), y);
 
 	vec3 resultColor = vec3(0, 0, 0);
-	curand_init(WangHash(threadId) + WangHash(frame), 0, 0, &randState);
-	Ray ray = camera->GetRay(&randState, x, y, dof);
-	vec3 color = TraceRay(ray, spheres, meshes, sphereCount, meshCount, directLighting, directLightingConstant, map, mapSize, &randState);
+	vec3 color = vec3(0, 0, 0);
+	for (int i = 0; i < samplePerFrame; i++)
+	{
+		curand_init(WangHash(threadId) + WangHash(frame) + WangHash(i), 0, 0, &randState);
+		Ray ray = camera->GetRay(&randState, x, y, dof);
+		color += TraceRay(ray, spheres, meshes, sphereCount, meshCount, directLighting, directLightingConstant, map, mapSize, &randState);
+	}
+	color /= samplePerFrame;
 	resultColor = (vec3(originColor.x, originColor.y, originColor.z) * (float)(frame - 1) + color) / (float)frame;
 	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
 }
@@ -1709,7 +1639,7 @@ __global__ void PhotonMapKernel(Camera* camera, Sphere* spheres, Mesh* meshes, i
 }
 
 // Photon Mapping Rendering Loop
-void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, bool dof, bool directLighting, float directLightingConstant, Photon* map, int mapSize, cudaSurfaceObject_t surface)
+void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, bool dof, bool directLighting, float directLightingConstant, Photon* map, int mapSize, int samplePerFrame, cudaSurfaceObject_t surface)
 {
 	cudaDeviceSetLimit(cudaLimitMallocHeapSize, 5000000000 * sizeof(float));
 	tracingGridProgress = 0;
@@ -1717,7 +1647,7 @@ void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount,
 	{
 		for (int j = 0; j < TRACE_OUTER_LOOP_Y; j++)
 		{
-			PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, directLighting, directLightingConstant, frame, map, mapSize, surface);
+			PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, directLighting, directLightingConstant, frame, map, mapSize, samplePerFrame, surface);
 			gpuErrorCheck(cudaDeviceSynchronize());
 		}
 	}
@@ -1746,16 +1676,14 @@ Photon* BuildPhotonMap(int maxPhotons, int frame = 0)
 	gpuErrorCheck(cudaMalloc(&cudaCamera, sizeof(Camera)));
 	gpuErrorCheck(cudaMemcpy(cudaCamera, camera, sizeof(Camera), cudaMemcpyHostToDevice));
 
-	int sphereCount = sizeof(spheres) / sizeof(Sphere);
 	Sphere* cudaSpheres;
-	gpuErrorCheck(cudaMalloc(&cudaSpheres, sizeof(Sphere) * sphereCount));
-	gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres, sizeof(Sphere) * sphereCount, cudaMemcpyHostToDevice));
+	gpuErrorCheck(cudaMalloc(&cudaSpheres, sizeof(Sphere) * spheresCount));
+	gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres.data(), sizeof(Sphere) * spheresCount, cudaMemcpyHostToDevice));
 
-	int meshCount = sizeof(meshes) / sizeof(Mesh);
 	Mesh* cudaMeshes;
 	std::vector<Mesh>* meshVector = new std::vector<Mesh>;
 	std::vector<Triangle*> triangleVector;
-	for (int i = 0; i < meshCount; i++)
+	for (int i = 0; i < meshesCount; i++)
 	{
 		Mesh currentMesh = meshes[i];
 		Mesh cudaMesh = currentMesh;
@@ -1766,8 +1694,8 @@ Photon* BuildPhotonMap(int maxPhotons, int frame = 0)
 		meshVector->push_back(cudaMesh);
 		triangleVector.push_back(cudaTriangles);
 	}
-	gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshCount));
-	gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector->data(), sizeof(Mesh) * meshCount, cudaMemcpyHostToDevice));
+	gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshesCount));
+	gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector->data(), sizeof(Mesh) * meshesCount, cudaMemcpyHostToDevice));
 
 	gpuErrorCheck(cudaDeviceSynchronize());
 	cudaEventCreate(&stop);
@@ -1779,7 +1707,7 @@ Photon* BuildPhotonMap(int maxPhotons, int frame = 0)
 
 	cudaEventCreate(&start);
 	cudaEventRecord(start, 0);
-	PhotonMapKernel << <grid, block >> > (cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, lightPos, lightEmission, maxPhotons, cudaPhotonMap, frame);
+	PhotonMapKernel << <grid, block >> > (cudaCamera, cudaSpheres, cudaMeshes, spheresCount, meshesCount, lightPos, lightEmission, maxPhotons, cudaPhotonMap, frame);
 	gpuErrorCheck(cudaDeviceSynchronize());
 	cudaEventCreate(&stop);
 	cudaEventRecord(stop, 0);
@@ -1808,7 +1736,7 @@ Photon* BuildPhotonMap(int maxPhotons, int frame = 0)
 	return photons;
 }
 
-void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool directLighting, int frame)
+void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool directLighting, int frame, int samplePerFrame)
 {
 	int width = camera->width;
 	int height = camera->height;
@@ -1821,34 +1749,46 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 	gpuErrorCheck(cudaMalloc(&cudaCamera, sizeof(Camera)));
 	gpuErrorCheck(cudaMemcpy(cudaCamera, camera, sizeof(Camera), cudaMemcpyHostToDevice));
 
-	int sphereCount = sizeof(spheres) / sizeof(Sphere);
 	Sphere* cudaSpheres;
-	gpuErrorCheck(cudaMalloc(&cudaSpheres, sizeof(Sphere) * sphereCount));
-	gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres, sizeof(Sphere) * sphereCount, cudaMemcpyHostToDevice));
+	gpuErrorCheck(cudaMalloc(&cudaSpheres, sizeof(Sphere) * spheresCount));
+	gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres.data(), sizeof(Sphere) * spheresCount, cudaMemcpyHostToDevice));
 
-	int meshCount = sizeof(meshes) / sizeof(Mesh);
 	Mesh* cudaMeshes;
 	std::vector<Mesh> meshVector;
 	std::vector<Triangle*> triangleVector;
-	for (int i = 0; i < meshCount; i++)
-	{
-		Mesh currentMesh = meshes[i];
-		Mesh cudaMesh = currentMesh;
-		Triangle* cudaTriangles;
-		gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
-		gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
+	Mesh currentMesh = meshes[frame];
+	Mesh cudaMesh = currentMesh;
+	Triangle* cudaTriangles;
+	gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
+	gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
 
 #if ENABLE_KDTREE
-		cudaMesh.nodes = currentMesh.tree->nodes.data;
-		cudaMesh.tna = currentMesh.tree->triangleNodeAssociation.data;
+	currentMesh.tree = new KDTree(currentMesh.triangles, currentMesh.count);
+	currentMesh.tree->Build();
+	cudaMesh.nodes = currentMesh.tree->nodes.data;
+	cudaMesh.tna = currentMesh.tree->triangleNodeAssociation.data;
 #endif
-		cudaMesh.triangles = cudaTriangles;
-		meshVector.push_back(cudaMesh);
-		triangleVector.push_back(cudaTriangles);
-	}
+	cudaMesh.triangles = cudaTriangles;
+	meshVector.push_back(cudaMesh);
 
-	gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshCount));
-	gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector.data(), sizeof(Mesh) * meshCount, cudaMemcpyHostToDevice));
+	currentMesh = meshes[0];
+	cudaMesh = currentMesh;
+	gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
+	gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
+#if ENABLE_KDTREE
+	currentMesh.tree = new KDTree(currentMesh.triangles, currentMesh.count);
+	currentMesh.tree->Build();
+	cudaMesh.nodes = currentMesh.tree->nodes.data;
+	cudaMesh.tna = currentMesh.tree->triangleNodeAssociation.data;
+#endif
+	cudaMesh.triangles = cudaTriangles;
+	meshVector.push_back(cudaMesh);
+
+	triangleVector.push_back(cudaTriangles);
+	
+
+	gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshesCount));
+	gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector.data(), sizeof(Mesh) * meshesCount, cudaMemcpyHostToDevice));
 
 	gpuErrorCheck(cudaDeviceSynchronize());
 	gpuErrorCheck(cudaEventCreate(&stop));
@@ -1876,7 +1816,7 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 
 	gpuErrorCheck(cudaEventCreate(&start));
 	gpuErrorCheck(cudaEventRecord(start, 0));
-	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, frame, dof, directLighting, directLightingConstant, cudaPhotonMap, photonMapSize, surface);
+	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, spheresCount, 2, 1, dof, directLighting, directLightingConstant, cudaPhotonMap, photonMapSize, samplePerFrame, surface);
 	gpuErrorCheck(cudaDeviceSynchronize());
 	gpuErrorCheck(cudaEventCreate(&stop));
 	gpuErrorCheck(cudaEventRecord(stop, 0));
@@ -1890,6 +1830,7 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 		delete photonMap;
 		cudaFree(cudaPhotonMap);
 	}
+	delete currentMesh.tree;
 	gpuErrorCheck(cudaFree(cudaCamera));
 	gpuErrorCheck(cudaFree(cudaSpheres));
 	for (auto & triangle : triangleVector)
@@ -2060,6 +2001,12 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		camera->UpdateCamera(deltaTime);
 
+		if (meshesCount != 0)
+		{
+			frame++;
+			frame = frame % meshesCount;
+		}
+
 		// OpenGL Draw
 		if (cudaToggle)
 		{
@@ -2078,10 +2025,10 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 			{
 				if (cudaDirty)
 				{
-					frame = 0;
+					//frame = 0;
 					cudaDirty = false;
 				}
-				RenderRealTime(viewCudaSurfaceObject, enableDof, enablePhoton, enableDirectLighting, ++frame);
+				RenderRealTime(viewCudaSurfaceObject, enableDof, enablePhoton, enableDirectLighting, frame, samplePerFrame);
 			}
 			cudaDestroySurfaceObject(viewCudaSurfaceObject);
 
@@ -2133,8 +2080,7 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 		{
 			// Draw Opengl
 			{
-				int size = sizeof(spheres) / sizeof(Sphere);
-				for (int n = 0; n < size; n++)
+				for (int n = 0; n < spheresCount; n++)
 				{
 					glPushMatrix();
 					glTranslatef(spheres[n].position.x, spheres[n].position.y, spheres[n].position.z);
@@ -2168,115 +2114,119 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 					}
 					glPopMatrix();
 				}
-				size = sizeof(meshes) / sizeof(Mesh);
-				for (int n = 0; n < size; n++)
+
+				if (meshesCount != 0)
 				{
 					glPushMatrix();
-					glTranslatef(meshes[n].position.x, meshes[n].position.y, meshes[n].position.z);
-					Triangle* triangles = meshes[n].triangles;
-					for (int i = 0; i < meshes[n].count; i++)
+					for (int i = 0; i < 2; i++)
 					{
-						glColor3fv(value_ptr(triangles[i].material.color));
-						vec3 p0 = triangles[i].pos[0];
-						vec3 p1 = triangles[i].pos[1];
-						vec3 p2 = triangles[i].pos[2];
-
-						vec3 normal = cross((p2 - p0), (p1 - p0));
-						normal = normalize(normal);
-						glBegin(GL_TRIANGLE_STRIP);
-						glNormal3fv(value_ptr(normal));
-						glVertex3fv(value_ptr(p0));
-						glVertex3fv(value_ptr(p1));
-						glVertex3fv(value_ptr(p2));
-						glEnd();
-
-						if (enableDrawNormal)
+						int index = i == 0 ? 0 : frame;
+						glTranslatef(meshes[index].position.x, meshes[index].position.y, meshes[index].position.z);
+						Triangle* triangles = meshes[index].triangles;
+						for (int i = 0; i < meshes[index].count; i++)
 						{
+							glColor3fv(value_ptr(triangles[i].material.color));
+							vec3 p0 = triangles[i].pos[0];
+							vec3 p1 = triangles[i].pos[1];
+							vec3 p2 = triangles[i].pos[2];
+
+							vec3 normal = cross((p2 - p0), (p1 - p0));
+							normal = normalize(normal);
+							glBegin(GL_TRIANGLE_STRIP);
+							glNormal3fv(value_ptr(normal));
+							glVertex3fv(value_ptr(p0));
+							glVertex3fv(value_ptr(p1));
+							glVertex3fv(value_ptr(p2));
+							glEnd();
+
+							if (enableDrawNormal)
+							{
+								glLineWidth(1.0f);
+								glColor3f(1.0f, 1.0f, 1.0f);
+								glBegin(GL_LINES);
+								glVertex3fv(value_ptr(triangles[i].pos[0]));
+								glVertex3fv(value_ptr(triangles[i].nor[0] + triangles[i].pos[0]));
+								glVertex3fv(value_ptr(triangles[i].pos[1]));
+								glVertex3fv(value_ptr(triangles[i].nor[1] + triangles[i].pos[1]));
+								glVertex3fv(value_ptr(triangles[i].pos[2]));
+								glVertex3fv(value_ptr(triangles[i].nor[2] + triangles[i].pos[2]));
+								glEnd();
+							}
+						}
+						if (enableDrawKDTree)
+						{
+							glDisable(GL_LIGHTING);
+							int nodeSize = meshes[index].tree->nodes.size();
 							glLineWidth(1.0f);
-							glColor3f(1.0f, 1.0f, 1.0f);
-							glBegin(GL_LINES);
-							glVertex3fv(value_ptr(triangles[i].pos[0]));
-							glVertex3fv(value_ptr(triangles[i].nor[0] + triangles[i].pos[0]));
-							glVertex3fv(value_ptr(triangles[i].pos[1]));
-							glVertex3fv(value_ptr(triangles[i].nor[1] + triangles[i].pos[1]));
-							glVertex3fv(value_ptr(triangles[i].pos[2]));
-							glVertex3fv(value_ptr(triangles[i].nor[2] + triangles[i].pos[2]));
-							glEnd();
+							KDTreeNode* nodes = new KDTreeNode[nodeSize];
+							meshes[index].tree->nodes.CopyToHost(nodes);
+							for (int i = 0; i < meshes[index].tree->nodes.size(); i++)
+							{
+								if (nodes[i].depth > KDTREE_MAX_DEPTH)
+									printf("WHAT %d\n", nodes[i].depth);
+								AABB box = nodes[i].nodeAABB;
+
+								vec3 corner[8];
+
+								corner[0] = { box.bounds[0].x, box.bounds[0].y, box.bounds[0].z };
+								corner[1] = { box.bounds[1].x, box.bounds[0].y, box.bounds[0].z };
+								corner[2] = { box.bounds[1].x, box.bounds[0].y, box.bounds[1].z };
+								corner[3] = { box.bounds[0].x, box.bounds[0].y, box.bounds[1].z };
+								corner[4] = { box.bounds[0].x, box.bounds[1].y, box.bounds[0].z };
+								corner[5] = { box.bounds[1].x, box.bounds[1].y, box.bounds[0].z };
+								corner[6] = { box.bounds[1].x, box.bounds[1].y, box.bounds[1].z };
+								corner[7] = { box.bounds[0].x, box.bounds[1].y, box.bounds[1].z };
+
+								glColor3f(1.0f, 1 - (i / float(nodeSize)), 0.0f);
+								glLineWidth(i / float(nodeSize));
+
+								glBegin(GL_LINES);
+
+								glVertex3f(corner[0].x, corner[0].y, corner[0].z);
+								glVertex3f(corner[1].x, corner[1].y, corner[1].z);
+
+								glVertex3f(corner[1].x, corner[1].y, corner[1].z);
+								glVertex3f(corner[2].x, corner[2].y, corner[2].z);
+
+								glVertex3f(corner[2].x, corner[2].y, corner[2].z);
+								glVertex3f(corner[3].x, corner[3].y, corner[3].z);
+
+								glVertex3f(corner[3].x, corner[3].y, corner[3].z);
+								glVertex3f(corner[0].x, corner[0].y, corner[0].z);
+
+
+
+								glVertex3f(corner[0].x, corner[0].y, corner[0].z);
+								glVertex3f(corner[4].x, corner[4].y, corner[4].z);
+
+								glVertex3f(corner[1].x, corner[1].y, corner[1].z);
+								glVertex3f(corner[5].x, corner[5].y, corner[5].z);
+
+								glVertex3f(corner[2].x, corner[2].y, corner[2].z);
+								glVertex3f(corner[6].x, corner[6].y, corner[6].z);
+
+								glVertex3f(corner[3].x, corner[3].y, corner[3].z);
+								glVertex3f(corner[7].x, corner[7].y, corner[7].z);
+
+
+
+								glVertex3f(corner[4].x, corner[4].y, corner[4].z);
+								glVertex3f(corner[5].x, corner[5].y, corner[5].z);
+
+								glVertex3f(corner[5].x, corner[5].y, corner[5].z);
+								glVertex3f(corner[6].x, corner[6].y, corner[6].z);
+
+								glVertex3f(corner[6].x, corner[6].y, corner[6].z);
+								glVertex3f(corner[7].x, corner[7].y, corner[7].z);
+
+								glVertex3f(corner[7].x, corner[7].y, corner[7].z);
+								glVertex3f(corner[4].x, corner[4].y, corner[4].z);
+
+								glEnd();
+							}
+							delete[] nodes;
+							glEnable(GL_LIGHTING);
 						}
-					}
-					if (enableDrawKDTree)
-					{
-						glDisable(GL_LIGHTING);
-						int nodeSize = meshes[n].tree->nodes.size();
-						glLineWidth(1.0f);
-						KDTreeNode* nodes = new KDTreeNode[nodeSize];
-						meshes[n].tree->nodes.CopyToHost(nodes);
-						for (int i = 0; i < meshes[n].tree->nodes.size(); i++)
-						{
-							if (nodes[i].depth > KDTREE_MAX_DEPTH)
-								printf("WHAT %d\n", nodes[i].depth);
-							AABB box = nodes[i].nodeAABB;
-
-							vec3 corner[8];
-
-							corner[0] = { box.bounds[0].x, box.bounds[0].y, box.bounds[0].z };
-							corner[1] = { box.bounds[1].x, box.bounds[0].y, box.bounds[0].z };
-							corner[2] = { box.bounds[1].x, box.bounds[0].y, box.bounds[1].z };
-							corner[3] = { box.bounds[0].x, box.bounds[0].y, box.bounds[1].z };
-							corner[4] = { box.bounds[0].x, box.bounds[1].y, box.bounds[0].z };
-							corner[5] = { box.bounds[1].x, box.bounds[1].y, box.bounds[0].z };
-							corner[6] = { box.bounds[1].x, box.bounds[1].y, box.bounds[1].z };
-							corner[7] = { box.bounds[0].x, box.bounds[1].y, box.bounds[1].z };
-
-							glColor3f(1.0f, 1 - (i / float(nodeSize)), 0.0f);
-							glLineWidth(i / float(nodeSize));
-
-							glBegin(GL_LINES);
-
-							glVertex3f(corner[0].x, corner[0].y, corner[0].z);
-							glVertex3f(corner[1].x, corner[1].y, corner[1].z);
-
-							glVertex3f(corner[1].x, corner[1].y, corner[1].z);
-							glVertex3f(corner[2].x, corner[2].y, corner[2].z);
-
-							glVertex3f(corner[2].x, corner[2].y, corner[2].z);
-							glVertex3f(corner[3].x, corner[3].y, corner[3].z);
-
-							glVertex3f(corner[3].x, corner[3].y, corner[3].z);
-							glVertex3f(corner[0].x, corner[0].y, corner[0].z);
-
-
-
-							glVertex3f(corner[0].x, corner[0].y, corner[0].z);
-							glVertex3f(corner[4].x, corner[4].y, corner[4].z);
-
-							glVertex3f(corner[1].x, corner[1].y, corner[1].z);
-							glVertex3f(corner[5].x, corner[5].y, corner[5].z);
-
-							glVertex3f(corner[2].x, corner[2].y, corner[2].z);
-							glVertex3f(corner[6].x, corner[6].y, corner[6].z);
-
-							glVertex3f(corner[3].x, corner[3].y, corner[3].z);
-							glVertex3f(corner[7].x, corner[7].y, corner[7].z);
-
-
-
-							glVertex3f(corner[4].x, corner[4].y, corner[4].z);
-							glVertex3f(corner[5].x, corner[5].y, corner[5].z);
-
-							glVertex3f(corner[5].x, corner[5].y, corner[5].z);
-							glVertex3f(corner[6].x, corner[6].y, corner[6].z);
-
-							glVertex3f(corner[6].x, corner[6].y, corner[6].z);
-							glVertex3f(corner[7].x, corner[7].y, corner[7].z);
-
-							glVertex3f(corner[7].x, corner[7].y, corner[7].z);
-							glVertex3f(corner[4].x, corner[4].y, corner[4].z);
-
-							glEnd();
-						}
-						delete[] nodes;
-						glEnable(GL_LIGHTING);
 					}
 					glPopMatrix();
 				}
@@ -2295,104 +2245,127 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 			ImGui::Begin("Cuda Tracer", nullptr, ImVec2(0,0), -1.0f, ImGuiWindowFlags_AlwaysAutoResize);
 			ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiSetCond_Once);
 			ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
-			if (cudaToggle)
+			ImGui::SliderInt("Sample Per Frame", &samplePerFrame, 1, 10);
+			if (!isLoaded)
 			{
-				ImGui::Text("Current Frame : %d", frame);
-
-				if (isSavingImage)
+				ImGui::SliderInt("Animation Length", &animationLength, 1, 592);
+				if (ImGui::Button("Load Objs"))
 				{
-					ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
-					ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
-				}
+					spheres.emplace_back(vec3(30, 100, 30), 8, Material(DIFF, vec3(1), vec3(2.2f, 2.2f, 2.2f)));
+					spheresCount = spheres.size();
+					float percent = 0;
 
-				if (ImGui::Button("Save Image"))
-				{
-					GLubyte *pixels = new GLubyte[3 * width*height];
-					glPixelStorei(GL_PACK_ALIGNMENT, 1);
-					glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels);
-					FIBITMAP* image = FreeImage_ConvertFromRawBits(pixels, width, height, 3 * width, 24, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, false);
-					SwapRedBlue32(image);
-					stringstream ss;
-					ss << "Result_" << frame << ".png";
-					FreeImage_Save(FIF_PNG, image, ss.str().c_str(), 0);
-					FreeImage_Unload(image);
-					delete pixels;
-				}
-				ImGui::Text("Memory Allocation Time : %f ms", memoryAllocTime);
-				ImGui::Text("Rendering time : %f ms", renderingTime);
-				ImGui::Text("Total Time : %f ms", memoryAllocTime + renderingTime);
+					meshes.emplace_back(vec3(0, 0, 0), "Scene.obj", Material(DIFF));
 
-				if (ImGui::Checkbox("Enable Dof", &enableDof))
-					cudaDirty = true;
-				if (enableDof)
-				{
-					if (ImGui::SliderFloat("Focal Distance", &(camera->focalDistance), EPSILON, 500))
-						cudaDirty = true;
-					if (ImGui::SliderFloat("Aperture", &(camera->aperture), EPSILON, 50))
-						cudaDirty = true;
-				}
-				if (ImGui::Checkbox("Enable Direct Lighting", &enableDirectLighting))
-					cudaDirty = true;
-				if (ImGui::Checkbox("Enable Photon Mapping", &enablePhoton))
-					cudaDirty = true;
-				if (ImGui::SliderFloat("Direct Lighting Weight", &directLightingConstant, EPSILON, 1000.0f))
-					cudaDirty = true;
-
-				if (isSavingImage)
-				{
-					ImGui::PopItemFlag();
-					ImGui::PopStyleVar();
+					for (int i = 0; i < animationLength; i++)
+					{
+						string oldName(to_string(i));
+						string fileName = string(4 - oldName.length(), '0') + oldName;
+						fileName.append(".obj");
+						meshes.emplace_back(vec3(0, 0, 0), fileName.c_str(), Material(TRANS));
+					}
+					meshesCount = meshes.size();
+					isLoaded = true;
 				}
 			}
 			else
 			{
-				ImGui::InputInt("Image Samples", &imageSaveSamples, 1, 100);
-				ImGui::SameLine();
-				if (ImGui::Button("Save Image"))
+				if (cudaToggle)
 				{
-					enableSaveImage = true;
-					frame = 1;
-					cudaDirty = false;
-					cudaToggle = true;
-					isSavingImage = true;
-				}
+					ImGui::Text("Current Frame : %d", frame);
 
-				if (ImGui::Checkbox("Draw Normal", &enableDrawNormal))
-					cudaDirty = true;
-				if (ImGui::Checkbox("Draw Debug KDTree AABBox", &enableDrawKDTree))
-					cudaDirty = true;
-			}
-
-			if (!isSavingImage)
-			{
-				int sphereCount = sizeof(spheres) / sizeof(Sphere);
-				int meshCount = sizeof(meshes) / sizeof(Mesh);
-
-				if (ImGui::CollapsingHeader("Objects"))
-				{
-					ImGui::Text("Spheres : %d", sphereCount);
-					ImGui::Text("Meshes : %d", meshCount);
-					ImGui::SliderInt("Current Object", &objectIndex, 0, sphereCount + meshCount - 1);
-
-					if (objectIndex < sphereCount)
+					if (isSavingImage)
 					{
-						if (ImGui::SliderFloat3("Position", value_ptr(spheres[objectIndex].position), -100.0f, 100.0f))
+						ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+						ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+					}
+
+					if (ImGui::Button("Save Image"))
+					{
+						GLubyte *pixels = new GLubyte[3 * width*height];
+						glPixelStorei(GL_PACK_ALIGNMENT, 1);
+						glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels);
+						FIBITMAP* image = FreeImage_ConvertFromRawBits(pixels, width, height, 3 * width, 24, FI_RGBA_RED_MASK, FI_RGBA_GREEN_MASK, FI_RGBA_BLUE_MASK, false);
+						SwapRedBlue32(image);
+						stringstream ss;
+						ss << "Result_" << frame << ".png";
+						FreeImage_Save(FIF_PNG, image, ss.str().c_str(), 0);
+						FreeImage_Unload(image);
+						delete pixels;
+					}
+					ImGui::Text("Memory Allocation Time : %f ms", memoryAllocTime);
+					ImGui::Text("Rendering time : %f ms", renderingTime);
+					ImGui::Text("Total Time : %f ms", memoryAllocTime + renderingTime);
+
+					if (ImGui::Checkbox("Enable Dof", &enableDof))
+						cudaDirty = true;
+					if (enableDof)
+					{
+						if (ImGui::SliderFloat("Focal Distance", &(camera->focalDistance), EPSILON, 500))
 							cudaDirty = true;
-						if (ImGui::SliderFloat("Radius", &(spheres[objectIndex].radius), EPSILON, 100))
-							cudaDirty = true;
-						if (ImGui::ListBox("Material Type", (int*)&(spheres[objectIndex].material.type), MATERIAL_TYPE_ARRAY, IM_ARRAYSIZE(MATERIAL_TYPE_ARRAY)))
-							cudaDirty = true;
-						if (ImGui::SliderFloat3("Color", value_ptr(spheres[objectIndex].material.color), 0.0f, 1.0f))
-							cudaDirty = true;
-						if (ImGui::SliderFloat3("Emission", value_ptr(spheres[objectIndex].material.emission), 0.0f, 10.0f))
+						if (ImGui::SliderFloat("Aperture", &(camera->aperture), EPSILON, 50))
 							cudaDirty = true;
 					}
-					else
+					if (ImGui::Checkbox("Enable Direct Lighting", &enableDirectLighting))
+						cudaDirty = true;
+					if (ImGui::Checkbox("Enable Photon Mapping", &enablePhoton))
+						cudaDirty = true;
+					if (ImGui::SliderFloat("Direct Lighting Weight", &directLightingConstant, EPSILON, 1000.0f))
+						cudaDirty = true;
+
+					if (isSavingImage)
 					{
-						int meshIndex = objectIndex - sphereCount;
-						ImGui::Text("Triangles : %d", meshes[meshIndex].count);
-						if (ImGui::SliderFloat3("Position", value_ptr(meshes[meshIndex].position), -100.0f, 100.0f))
-							cudaDirty = true;
+						ImGui::PopItemFlag();
+						ImGui::PopStyleVar();
+					}
+				}
+				else
+				{
+					ImGui::InputInt("Image Samples", &imageSaveSamples, 1, 100);
+					ImGui::SameLine();
+					if (ImGui::Button("Save Image"))
+					{
+						enableSaveImage = true;
+						frame = 1;
+						cudaDirty = false;
+						cudaToggle = true;
+						isSavingImage = true;
+					}
+
+					if (ImGui::Checkbox("Draw Normal", &enableDrawNormal))
+						cudaDirty = true;
+					if (ImGui::Checkbox("Draw Debug KDTree AABBox", &enableDrawKDTree))
+						cudaDirty = true;
+				}
+
+				if (!isSavingImage)
+				{
+					if (ImGui::CollapsingHeader("Objects"))
+					{
+						ImGui::Text("Spheres : %d", spheresCount);
+						ImGui::Text("Meshes : %d", meshesCount);
+						ImGui::SliderInt("Current Object", &objectIndex, 0, spheresCount + meshesCount - 1);
+
+						if (objectIndex < spheresCount)
+						{
+							if (ImGui::SliderFloat3("Position", value_ptr(spheres[objectIndex].position), -100.0f, 100.0f))
+								cudaDirty = true;
+							if (ImGui::SliderFloat("Radius", &(spheres[objectIndex].radius), EPSILON, 100))
+								cudaDirty = true;
+							if (ImGui::ListBox("Material Type", (int*)&(spheres[objectIndex].material.type), MATERIAL_TYPE_ARRAY, IM_ARRAYSIZE(MATERIAL_TYPE_ARRAY)))
+								cudaDirty = true;
+							if (ImGui::SliderFloat3("Color", value_ptr(spheres[objectIndex].material.color), 0.0f, 1.0f))
+								cudaDirty = true;
+							if (ImGui::SliderFloat3("Emission", value_ptr(spheres[objectIndex].material.emission), 0.0f, 10.0f))
+								cudaDirty = true;
+						}
+						else
+						{
+							int meshIndex = objectIndex - spheresCount;
+							ImGui::Text("Triangles : %d", meshes[meshIndex].count);
+							if (ImGui::SliderFloat3("Position", value_ptr(meshes[meshIndex].position), -100.0f, 100.0f))
+								cudaDirty = true;
+						}
 					}
 				}
 			}
@@ -2447,8 +2420,8 @@ int main(int argc, char **argv)
 
 	FreeImage_Initialise();
 
-	// imgui
 	{
+		// imgui
 		ImGui::CreateContext();
 		ImGuiIO& io = ImGui::GetIO(); (void) io;
 
@@ -2456,8 +2429,6 @@ int main(int argc, char **argv)
 
 		ImGui::StyleColorsDark();
 	}
-
-	// Init
 
 	{
 		camera = new Camera;
@@ -2525,12 +2496,11 @@ int main(int argc, char **argv)
 
 
 #if ENABLE_KDTREE
-	int mesheCount = sizeof(meshes) / sizeof(Mesh);
-	for (int i = 0; i < mesheCount; i++)
-	{
-		meshes[i].tree = new KDTree(meshes[i].triangles, meshes[i].count);
-		meshes[i].tree->Build();
-	}
+	//for (int i = 0; i < meshesCount; i++)
+	//{
+	//	meshes[i].tree = new KDTree(meshes[i].triangles, meshes[i].count);
+	//	meshes[i].tree->Build();
+	//}
 #endif
 
 	glutKeyboardFunc(Keyboard);
