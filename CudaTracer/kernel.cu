@@ -16,10 +16,12 @@ struct Ray
 {
 	vec3 origin;
 	vec3 direction;
-	__host__ __device__ Ray(vec3 origin, vec3 direction)
+	float decay;
+	__host__ __device__ Ray(vec3 origin = vec3(0), vec3 direction = vec3(0))
 	{
 		this->origin = origin + direction * (ENABLE_SURFACE_ACNE ? 0 : EPSILON);
 		this->direction = direction;
+		this->decay = 1.0f;
 	}
 };
 
@@ -62,9 +64,6 @@ struct Camera
 
 	__device__ Ray GetRay(curandState* randState, int x, int y, bool dof)
 	{
-		float jitterValueX = curand_uniform(randState) - 0.5;
-		float jitterValueY = curand_uniform(randState) - 0.5;
-
 		vec3 wDir = glm::normalize(-forward);
 		vec3 uDir = glm::normalize(cross(up, wDir));
 		vec3 vDir = glm::cross(wDir, -uDir);
@@ -74,8 +73,8 @@ struct Camera
 		float bottom = -top;
 		float left = -right;
 
-		float imPlaneUPos = left + (right - left)*(((float)x + jitterValueX) / (float)width);
-		float imPlaneVPos = bottom + (top - bottom)*(((float)y + jitterValueY) / (float)height);
+		float imPlaneUPos = left + (right - left)*(x / (float)width);
+		float imPlaneVPos = bottom + (top - bottom)*(y / (float)height);
 
 		vec3 originDirection = imPlaneUPos * uDir + imPlaneVPos * vDir - wDir;
 		vec3 pointOnImagePlane = position + ((originDirection) * focalDistance);
@@ -337,6 +336,30 @@ struct Sphere
 		float dyr = radius * sin(theta) * sin(phi);
 		float dzr = radius * cos(theta);
 		return vec3(position.x + dxr, position.y + dyr, position.z + dzr);
+	}
+};
+
+struct Light
+{
+	// Point Light만 임시 구현
+	vec3 pos;
+	vec3 color;
+	float intensity;
+
+	__host__ __device__ Light(vec3 pos = vec3(0), vec3 color = vec3(0), float intensity = 0)
+	{
+		this->pos = pos;
+		this->color = color;
+		this->intensity = intensity;
+	}
+
+	__device__ void Illuminate(vec3 &hitPoint, vec3 &lightDir, vec3 &lightIntensity, float &distance)
+	{
+		lightDir = (hitPoint - pos);
+		float r2 = length(lightDir);
+		distance = sqrt(r2);
+		lightDir /= distance;
+		lightIntensity = color * intensity / (4 * pi<float>() * r2);
 	}
 };
 
@@ -1326,14 +1349,14 @@ Camera* camera;
 
 vector<Sphere> spheres;
 vector<Mesh> meshes;
+vector<Light> lights;
 
 #pragma endregion Scene
 
 #pragma region Kernels
 
-__device__ ObjectIntersection Intersect(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount)
+__device__ void Intersect(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, ObjectIntersection &intersection)
 {
-	ObjectIntersection intersection = ObjectIntersection();
 	ObjectIntersection temp = ObjectIntersection();
 
 	for (int i = 0; i < sphereCount; i++)
@@ -1361,228 +1384,214 @@ __device__ ObjectIntersection Intersect(Ray ray, Sphere* spheres, Mesh* meshes, 
 			}
 		}
 	}
-
-	return intersection;
 }
 
-__device__ Ray GetReflectedRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, vec3 hitPoint, glm::vec3 normal, vec3 &mask, Material material, curandState* randState)
+//__device__ Ray GetReflectedRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, vec3 hitPoint, glm::vec3 normal, vec3 &mask, Material material, curandState* randState)
+//{
+//	switch (material.type)
+//	{
+//	case DIFF:
+//	{
+//		vec3 nl = dot(normal, ray.direction) < EPSILON ? normal : normal * -1.0f;
+//		float r1 = two_pi<float>() * curand_uniform(randState);
+//		float r2 = curand_uniform(randState);
+//		float r2s = sqrt(r2);
+//
+//		vec3 w = nl;
+//		vec3 u;
+//		if (fabs(w.x) > 0.1f)
+//			u = normalize(cross(vec3(0.0f, 1.0f, 0.0f), w));
+//		else
+//			u = normalize(cross(vec3(1.0f, 0.0f, 0.0f), w));
+//		vec3 v = cross(w, u);
+//		vec3 reflected = normalize((u * __cosf(r1) * r2s + v * __sinf(r1) * r2s + w * sqrt(1 - r2)));
+//		mask *= material.color;
+//		return Ray(hitPoint, reflected);
+//	}
+//	case GLOSS:
+//	{
+//		float phi = 2 * pi<float>() * curand_uniform(randState);
+//		float r2 = curand_uniform(randState);
+//		float phongExponent = 20;
+//		float cosTheta = __powf(1 - r2, 1.0f / (phongExponent + 1));
+//		float sinTheta = __sinf(1 - cosTheta * cosTheta);
+//
+//		vec3 w = normalize(ray.direction - normal * 2.0f * dot(normal, ray.direction));
+//		vec3 u = normalize(cross((fabs(w.x) > .1 ? vec3(0, 1, 0) : vec3(1, 0, 0)), w));
+//		vec3 v = cross(w, u);
+//
+//		vec3 reflected = normalize(u * __cosf(phi) * sinTheta + v * __sinf(phi) * sinTheta + w * cosTheta);
+//		mask *= material.color;
+//		return Ray(hitPoint, reflected);
+//	}
+//	case WATER:
+//	{
+//		vec3 nl = dot(normal, ray.direction) < EPSILON ? normal : normal * -1.0f;
+//		vec3 reflection = ray.direction - normal * 2.0f * dot(normal, ray.direction);
+//		bool into = dot(normal, nl) > EPSILON;
+//		float nc = 1.0f;
+//		float nt = 1.5f;
+//		float nnt = into ? nc / nt : nt / nc;
+//
+//		float Re, RP, TP, Tr;
+//		vec3 tdir = vec3(0.0f, 0.0f, 0.0f);
+//
+//		float ddn = dot(ray.direction, nl);
+//		float cos2t = 1.0f - nnt * nnt * (1.0f - ddn * ddn);
+//
+//		if (cos2t < EPSILON) return Ray(hitPoint, reflection);
+//
+//		if (into)
+//			tdir = normalize((ray.direction * nnt - normal * (ddn * nnt + sqrt(cos2t))));
+//		else
+//			tdir = normalize((ray.direction * nnt + normal * (ddn * nnt + sqrt(cos2t))));
+//
+//		float a = nt - nc;
+//		float b = nt + nc;
+//		float R0 = a * a / (b * b);
+//
+//		float c;
+//		if (into)
+//			c = 1 + ddn;
+//		else
+//			c = 1 - dot(tdir, normal);
+//
+//		Re = R0 + (1 - R0) * c * c * c * c * c;
+//		Tr = 1 - Re;
+//
+//		float P = .25 + .5 * Re;
+//		RP = Re / P;
+//		TP = Tr / (1 - P);
+//
+//		if (curand_uniform(randState) < P)
+//		{
+//			mask *= (RP);
+//			return Ray(hitPoint, reflection);
+//		}
+//		mask *= (TP);
+//		return Ray(hitPoint, tdir);
+//	}
+//	case SPEC:
+//	{
+//		vec3 reflected = ray.direction - normal * 2.0f * dot(normal, ray.direction);
+//		mask *= material.color;
+//		return Ray(hitPoint, reflected);
+//	}
+//	}
+//}
+//
+//__device__ Ray GetReflectedRay2(Ray ray, vec3 hitPoint, glm::vec3 normal)
+//{
+//	vec3 reflected = normalize(reflect(ray.direction, normal)); 
+//
+//	return Ray(hitPoint + reflected *0.01f, reflected);
+//}
+
+
+
+// queue
+__device__ void Enqueue(Ray* rayQueue, Ray ray, int& rear)
 {
-	switch (material.type)
-	{
-	case DIFF:
-	{
-		vec3 nl = dot(normal, ray.direction) < EPSILON ? normal : normal * -1.0f;
-		float r1 = two_pi<float>() * curand_uniform(randState);
-		float r2 = curand_uniform(randState);
-		float r2s = sqrt(r2);
-
-		vec3 w = nl;
-		vec3 u;
-		if (fabs(w.x) > 0.1f)
-			u = normalize(cross(vec3(0.0f, 1.0f, 0.0f), w));
-		else
-			u = normalize(cross(vec3(1.0f, 0.0f, 0.0f), w));
-		vec3 v = cross(w, u);
-		vec3 reflected = normalize((u * __cosf(r1) * r2s + v * __sinf(r1) * r2s + w * sqrt(1 - r2)));
-		mask *= material.color;
-		return Ray(hitPoint, reflected);
-	}
-	case GLOSS:
-	{
-		float phi = 2 * pi<float>() * curand_uniform(randState);
-		float r2 = curand_uniform(randState);
-		float phongExponent = 20;
-		float cosTheta = __powf(1 - r2, 1.0f / (phongExponent + 1));
-		float sinTheta = __sinf(1 - cosTheta * cosTheta);
-
-		vec3 w = normalize(ray.direction - normal * 2.0f * dot(normal, ray.direction));
-		vec3 u = normalize(cross((fabs(w.x) > .1 ? vec3(0, 1, 0) : vec3(1, 0, 0)), w));
-		vec3 v = cross(w, u);
-
-		vec3 reflected = normalize(u * __cosf(phi) * sinTheta + v * __sinf(phi) * sinTheta + w * cosTheta);
-		mask *= material.color;
-		return Ray(hitPoint, reflected);
-	}
-	case TRANS:
-	{
-		vec3 nl = dot(normal, ray.direction) < EPSILON ? normal : normal * -1.0f;
-		vec3 reflection = ray.direction - normal * 2.0f * dot(normal, ray.direction);
-		bool into = dot(normal, nl) > EPSILON;
-		float nc = 1.0f;
-		float nt = 1.5f;
-		float nnt = into ? nc / nt : nt / nc;
-
-		float Re, RP, TP, Tr;
-		vec3 tdir = vec3(0.0f, 0.0f, 0.0f);
-
-		float ddn = dot(ray.direction, nl);
-		float cos2t = 1.0f - nnt * nnt * (1.0f - ddn * ddn);
-
-		if (cos2t < EPSILON) return Ray(hitPoint, reflection);
-
-		if (into)
-			tdir = normalize((ray.direction * nnt - normal * (ddn * nnt + sqrt(cos2t))));
-		else
-			tdir = normalize((ray.direction * nnt + normal * (ddn * nnt + sqrt(cos2t))));
-
-		float a = nt - nc;
-		float b = nt + nc;
-		float R0 = a * a / (b * b);
-
-		float c;
-		if (into)
-			c = 1 + ddn;
-		else
-			c = 1 - dot(tdir, normal);
-
-		Re = R0 + (1 - R0) * c * c * c * c * c;
-		Tr = 1 - Re;
-
-		float P = .25 + .5 * Re;
-		RP = Re / P;
-		TP = Tr / (1 - P);
-
-		if (curand_uniform(randState) < P)
-		{
-			mask *= (RP);
-			return Ray(hitPoint, reflection);
-		}
-		mask *= (TP);
-		return Ray(hitPoint, tdir);
-	}
-	case SPEC:
-	{
-		vec3 reflected = ray.direction - normal * 2.0f * dot(normal, ray.direction);
-		mask *= material.color;
-		return Ray(hitPoint, reflected);
-	}
-	}
+	rayQueue[rear] = ray;
+	rear = (rear + 1) % QUEUE_SIZE;
 }
 
-// Photon Map (Building Photon Map)
-__device__ Photon TraceRay(Ray ray, vec3 lightEmission, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, curandState* randState)
+__device__ void Dequeue(Ray* rayQueue, int& front)
 {
-	/*vec3 resultColor = lightEmission;
-	MaterialType beforeType = NONE;
-	for (int depth = 0; depth < 4; depth++)
-	{
-		ObjectIntersection intersection = Intersect(ray, spheres, meshes, sphereCount, meshCount);
-
-		if (intersection.hit == false) return Photon();
-
-		vec3 color = intersection.material.color;
-		float maxReflection = color.x > color.y && color.x > color.z ? color.x : color.y > color.z ? color.y : color.z;
-		float random = curand_uniform(randState);
-
-		vec3 position = ray.origin + ray.direction * intersection.t;
-
-		if (intersection.material.type == DIFF || intersection.material.type == GLOSS || intersection.material.type == SPEC)
-		{
-			if (beforeType == TRANS)
-			{
-				Photon photon = Photon();
-				photon.isHit = intersection.hit;
-				photon.normal = intersection.normal;
-				photon.position = position;
-				photon.type = intersection.material.type;
-				photon.power = resultColor;
-				return photon;
-			}
-		}
-		beforeType = intersection.material.type;
-		ray = GetReflectedRay(ray, spheres, meshes, sphereCount, meshCount, position, intersection.normal, resultColor, intersection.material, randState);
-	}*/
-	return Photon();
+	front = (front + 1) % QUEUE_SIZE;
 }
+
+__device__ Ray GetQueueFront(Ray* rayQueue, const int front)
+{
+	return rayQueue[front];
+}
+
+__device__ bool IsQueueEmpty(const int front, const int rear)
+{
+	return front == rear;
+}
+
 
 // Path Tracing + Photon Map
-__device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, bool directLighting, float directLightingConstant, Photon* map, int maxPhotons, curandState* randState)
+__device__ vec3 TraceRay(Ray ray, Sphere* spheres, Mesh* meshes, Light* lights, int sphereCount, int meshCount, int lightCount, curandState* randState)
 {
 	vec3 resultColor = vec3(0);
-	vec3 mask = vec3(1);
 
-	for (int depth = 0; depth < MAX_DEPTH; depth++)
+	Ray rayQueue[QUEUE_SIZE];
+	int front = 0, rear = 0, depth = 0;
+
+	Enqueue(rayQueue, ray, rear);
+
+	while (!IsQueueEmpty(front, rear))
 	{
-		ObjectIntersection intersection = Intersect(ray, spheres, meshes, sphereCount, meshCount);
+		if (depth > MAX_DEPTH)
+			break;
+
+		ray = GetQueueFront(rayQueue, front);
+		Dequeue(rayQueue, front);
+
+		ObjectIntersection intersection = ObjectIntersection();
+		Intersect(ray, spheres, meshes, sphereCount, meshCount, intersection);
 
 		if (intersection.hit == 0)
 		{
-			float longlatX = atan2(ray.direction.x, ray.direction.z);
-			longlatX = longlatX < EPSILON ? longlatX + two_pi<float>() : longlatX;
-			float longlatY = acos(-ray.direction.y);
+			//float longlatX = atan2(ray.direction.x, ray.direction.z);
+			//longlatX = longlatX < EPSILON ? longlatX + two_pi<float>() : longlatX;
+			//float longlatY = acos(-ray.direction.y);
 
-			float u = longlatX / two_pi<float>();
-			float v = longlatY / pi<float>();
+			//float u = longlatX / two_pi<float>();
+			//float v = longlatY / pi<float>();
 
-			int u2 = (int)(u * HDRWidth);
-			int tvec = (int)(v * HDRHeight);
+			//int u2 = (int) (u * HDRWidth);
+			//int tvec = (int) (v * HDRHeight);
 
-			int HDRtexelidx = u2 + tvec * HDRWidth;
+			//int HDRtexelidx = u2 + tvec * HDRWidth;
 
-			float4 HDRcol = tex1Dfetch(HDRtexture, HDRtexelidx);
-			vec3 HDRcol2 = vec3(HDRcol.x, HDRcol.y, HDRcol.z);
+			//float4 HDRcol = tex1Dfetch(HDRtexture, HDRtexelidx);
+			//vec3 HDRcol2 = vec3(HDRcol.x, HDRcol.y, HDRcol.z);
 
-			return resultColor + (mask * HDRcol2);
+			return vec3(0);
 		}
 
 		vec3 hitPoint = ray.origin + ray.direction * intersection.t;
 		vec3 emission = intersection.material.emission;
-		vec3 photonColor = vec3(0, 0, 0);
-		int nearPhotonCount = 0;
-		for (int i = 0; i < maxPhotons; i++)
+
+		switch (intersection.material.type)
 		{
-			float dist = distance(hitPoint, map[i].position);
-			if (dist <= 5.0f && dot(intersection.normal, map[i].normal) > 0)
-			{
-				photonColor += map[i].power * 1.0f / (pi<float>() * dist);
-				nearPhotonCount++;
-			}
-		}
-		if (nearPhotonCount >= 3)
-			photonColor /= (float)nearPhotonCount;
-
-		if (intersection.material.type == DIFF || intersection.material.type == GLOSS || intersection.material.type == SPEC)
-			emission += photonColor;
-
-		vec3 explicitLightColor = vec3(0, 0, 0);
-
-		if (directLighting)
-		{
-			if (intersection.material.type == DIFF)
-			{
-				for (int i = 0; i < sphereCount; i++)
+			case DIFF:
+				for (int i = 0; i < lightCount; i++)
 				{
-					float maxEmission = max(max(spheres[i].material.emission.x, spheres[i].material.emission.y), spheres[i].material.emission.z);
-					if (maxEmission < 1.0f)
-						continue;
-
-					vec3 lightPoint = spheres[i].RandomPoint(randState);
-					vec3 lightDirection = normalize(lightPoint - hitPoint);
-					Ray rayToLight = Ray(hitPoint, lightDirection);
-					ObjectIntersection lightIntersection = Intersect(rayToLight, spheres, meshes, sphereCount, meshCount);
-					if (lightIntersection.hitPtr == &spheres[i])
-					{
-						float wi = dot(lightDirection, intersection.normal);
-						if (wi > 0)
-						{
-							float radius = spheres[i].radius;
-							float cosMax = sqrt(1 - radius * radius / dot(hitPoint - lightPoint, hitPoint - lightPoint));
-							float omega = two_pi<float>() * (1 - cosMax);
-							explicitLightColor += spheres[i].material.emission * wi * omega * one_over_pi<float>() * directLightingConstant;
-						}
-					}
+					vec3 lightDir, lightIntensity;
+					ObjectIntersection lightIntersection;
+					lights[i].Illuminate(hitPoint, lightDir, lightIntensity, lightIntersection.t);
+					Ray lightRay = Ray(hitPoint + intersection.normal * EPSILON, -lightDir);
+					Intersect(lightRay, spheres, meshes, sphereCount, meshCount, lightIntersection);
+					resultColor += float(!lightIntersection.hit) * lightIntensity * max(0.0f, dot(intersection.normal, -lightDir));
 				}
-			}
-		}
+				break;
+			case WATER:
+				vec3 bias = 0.1f * intersection.normal;
+				vec3 refractionDirection = normalize(refract(ray.direction, intersection.normal, 1.5f));
+				vec3 refractionRayOrig = hitPoint - bias;
+				Ray refractRay = Ray(refractionRayOrig, refractionDirection);
+				refractRay.decay = ray.decay * 0.9f;
+				Enqueue(rayQueue, refractRay, rear);
 
-		resultColor += mask * (emission + explicitLightColor);
-		ray = GetReflectedRay(ray, spheres, meshes, sphereCount, meshCount, hitPoint, intersection.normal, mask, intersection.material, randState);
+				vec3 reflectionDirection = normalize(reflect(ray.direction, intersection.normal));
+				vec3 reflectionRayOrig = hitPoint + bias;				Ray reflectRay = Ray(reflectionRayOrig, reflectionDirection);				reflectRay.decay = ray.decay * 0.1f;				Enqueue(rayQueue, reflectRay, rear);
+				break;
+			default:
+				break;
+		}
+		resultColor += intersection.material.color * ray.decay;
+		depth++;
 	}
-	return resultColor;
+
+	return resultColor / (float)depth;
 }
 
 // Real time + Photon Mapping Kernel
-__global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int loopX, int loopY, bool dof, bool directLighting, float directLightingConstant, int frame, Photon* map, int mapSize, int samplePerFrame, cudaSurfaceObject_t surface)
+__global__ void RayKernel(Camera* camera, Sphere* spheres, Mesh* meshes, Light* lights, int sphereCount, int meshCount, int lightCount, int loopX, int loopY, bool dof, cudaSurfaceObject_t surface)
 {
 	int width = camera->width;
 	int height = camera->height;
@@ -1595,148 +1604,28 @@ __global__ void PathKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sp
 	if (i >= width * height) return;
 
 	curandState randState;
-	float4 originColor;
-	surf2Dread(&originColor, surface, x * sizeof(float4), y);
-
 	vec3 resultColor = vec3(0, 0, 0);
-	vec3 color = vec3(0, 0, 0);
-	for (int i = 0; i < samplePerFrame; i++)
-	{
-		curand_init(WangHash(threadId) + WangHash(frame) + WangHash(i), 0, 0, &randState);
-		Ray ray = camera->GetRay(&randState, x, y, dof);
-		color += TraceRay(ray, spheres, meshes, sphereCount, meshCount, directLighting, directLightingConstant, map, mapSize, &randState);
-	}
-	color /= samplePerFrame;
-	resultColor = (vec3(originColor.x, originColor.y, originColor.z) * (float)(frame - 1) + color) / (float)frame;
+	curand_init(WangHash(threadId) + WangHash(i), 0, 0, &randState);
+	Ray ray = camera->GetRay(&randState, x, y, dof);
+	resultColor = TraceRay(ray, spheres, meshes, lights, sphereCount, meshCount, lightCount, &randState);
 	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
 }
 
-// Kernel to Build Photon Map
-__global__ void PhotonMapKernel(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, vec3 lightPos, vec3 lightEmission, int maxPhotons, Photon* map, int frame = 0)
-{
-	int i = threadIdx.x + blockDim.x*blockIdx.x;
-	if (i >= maxPhotons) return;
-
-	curandState randState;
-
-	Photon photon;
-	int threshold = MAX_BUILD_PHOTON_TRHESHOLD;
-	int count = 0;
-	while (!photon.isHit)
-	{
-		if (count > threshold)
-			break;
-		curand_init(WangHash(WangHash(i) + WangHash(count) + WangHash(maxPhotons) + WangHash(frame)), 0, 0, &randState);
-		count++;
-
-		float theta = 2 * pi<float>() * curand_uniform(&randState);
-		float phi = acos(1 - 2 * curand_uniform(&randState));
-		vec3 dir = normalize(vec3(__sinf(phi) * __cosf(theta), __sinf(phi) * __sinf(theta), __cosf(phi)));
-		Ray ray = Ray(lightPos, dir);
-		photon = TraceRay(ray, lightEmission, spheres, meshes, sphereCount, meshCount, &randState);
-	}
-	map[i] = photon;
-}
-
 // Photon Mapping Rendering Loop
-void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, int sphereCount, int meshCount, int frame, bool dof, bool directLighting, float directLightingConstant, Photon* map, int mapSize, int samplePerFrame, cudaSurfaceObject_t surface)
+void TracingLoop(Camera* camera, Sphere* spheres, Mesh* meshes, Light* lights, int sphereCount, int meshCount, int lightCount, bool dof, cudaSurfaceObject_t surface)
 {
-	cudaDeviceSetLimit(cudaLimitMallocHeapSize, 5000000000 * sizeof(float));
-	tracingGridProgress = 0;
+	gpuErrorCheck(cudaDeviceSetLimit(cudaLimitMallocHeapSize, 5000000000 * sizeof(float)));
 	for (int i = 0; i < TRACE_OUTER_LOOP_X; i++)
 	{
 		for (int j = 0; j < TRACE_OUTER_LOOP_Y; j++)
 		{
-			PathKernel << <grid, block >> > (camera, spheres, meshes, sphereCount, meshCount, i, j, dof, directLighting, directLightingConstant, frame, map, mapSize, samplePerFrame, surface);
+			RayKernel << <grid, block >> > (camera, spheres, meshes, lights, sphereCount, meshCount, lightCount, i, j, dof, surface);
 			gpuErrorCheck(cudaDeviceSynchronize());
 		}
 	}
 }
 
-Photon* BuildPhotonMap(int maxPhotons, int frame = 0)
-{
-	Photon *photons, *cudaPhotonMap/*, *cudaDebugPhotonMap*/;
-
-	vec3 lightPos = vec3(0, 50, 0);
-	vec3 lightEmission = vec3(1.5, 1.5, 1.5);
-
-	block = dim3(256, 1);
-	grid.x = ceil(maxPhotons / block.x);
-	grid.y = 1;
-
-	gpuErrorCheck(cudaMalloc(&cudaPhotonMap, sizeof(Photon) * maxPhotons));
-	//gpuErrorCheck(cudaMalloc(&cudaDebugPhotonMap, sizeof(Photon) * maxPhotons));
-
-	cudaEvent_t start, stop;
-	float memoryAllocTime, renderingTime;
-	cudaEventCreate(&start);
-	cudaEventRecord(start, 0);
-
-	Camera* cudaCamera;
-	gpuErrorCheck(cudaMalloc(&cudaCamera, sizeof(Camera)));
-	gpuErrorCheck(cudaMemcpy(cudaCamera, camera, sizeof(Camera), cudaMemcpyHostToDevice));
-
-	Sphere* cudaSpheres;
-	gpuErrorCheck(cudaMalloc(&cudaSpheres, sizeof(Sphere) * spheresCount));
-	gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres.data(), sizeof(Sphere) * spheresCount, cudaMemcpyHostToDevice));
-
-	Mesh* cudaMeshes;
-	std::vector<Mesh>* meshVector = new std::vector<Mesh>;
-	std::vector<Triangle*> triangleVector;
-	for (int i = 0; i < meshesCount; i++)
-	{
-		Mesh currentMesh = meshes[i];
-		Mesh cudaMesh = currentMesh;
-		Triangle* cudaTriangles;
-		gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
-		gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
-		cudaMesh.triangles = cudaTriangles;
-		meshVector->push_back(cudaMesh);
-		triangleVector.push_back(cudaTriangles);
-	}
-	gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshesCount));
-	gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector->data(), sizeof(Mesh) * meshesCount, cudaMemcpyHostToDevice));
-
-	gpuErrorCheck(cudaDeviceSynchronize());
-	cudaEventCreate(&stop);
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&memoryAllocTime, start, stop);
-	cudaEventDestroy(start);
-	cudaEventDestroy(stop);
-
-	cudaEventCreate(&start);
-	cudaEventRecord(start, 0);
-	PhotonMapKernel << <grid, block >> > (cudaCamera, cudaSpheres, cudaMeshes, spheresCount, meshesCount, lightPos, lightEmission, maxPhotons, cudaPhotonMap, frame);
-	gpuErrorCheck(cudaDeviceSynchronize());
-	cudaEventCreate(&stop);
-	cudaEventRecord(stop, 0);
-	cudaEventSynchronize(stop);
-	cudaEventElapsedTime(&renderingTime, start, stop);
-	cudaEventDestroy(start);
-	cudaEventDestroy(stop);
-	printf("Building Photon Map End | Memory Allocation Time : %f ms | Building time : %f ms\n", memoryAllocTime, renderingTime);
-
-	photons = new Photon[maxPhotons];
-	gpuErrorCheck(cudaMemcpy(photons, cudaPhotonMap, sizeof(Photon) * maxPhotons, cudaMemcpyDeviceToHost));
-
-	cudaFree(cudaPhotonMap);
-	cudaFree(cudaCamera);
-	cudaFree(cudaSpheres);
-	for (auto & triangle : triangleVector)
-	{
-		cudaFree(triangle);
-	}
-	for (auto & mesh : *meshVector)
-	{
-		cudaFree(&mesh);
-	}
-	delete meshVector;
-	cudaFree(cudaMeshes);
-	return photons;
-}
-
-void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool directLighting, int frame, int samplePerFrame)
+void RenderRealTime(cudaSurfaceObject_t surface, bool dof, int frame)
 {
 	int width = camera->width;
 	int height = camera->height;
@@ -1754,8 +1643,9 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 	gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres.data(), sizeof(Sphere) * spheresCount, cudaMemcpyHostToDevice));
 
 	Mesh* cudaMeshes;
-	std::vector<Mesh> meshVector;
-	std::vector<Triangle*> triangleVector;
+	vector<Mesh> meshVector;
+	vector<Triangle*> triangleVector;
+	vector<KDTree*> treeVector;
 	Mesh currentMesh = meshes[frame];
 	Mesh cudaMesh = currentMesh;
 	Triangle* cudaTriangles;
@@ -1767,6 +1657,7 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 	currentMesh.tree->Build();
 	cudaMesh.nodes = currentMesh.tree->nodes.data;
 	cudaMesh.tna = currentMesh.tree->triangleNodeAssociation.data;
+	treeVector.push_back(currentMesh.tree);
 #endif
 	cudaMesh.triangles = cudaTriangles;
 	meshVector.push_back(cudaMesh);
@@ -1780,15 +1671,19 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 	currentMesh.tree->Build();
 	cudaMesh.nodes = currentMesh.tree->nodes.data;
 	cudaMesh.tna = currentMesh.tree->triangleNodeAssociation.data;
+	treeVector.push_back(currentMesh.tree);
 #endif
 	cudaMesh.triangles = cudaTriangles;
 	meshVector.push_back(cudaMesh);
 
 	triangleVector.push_back(cudaTriangles);
-	
 
 	gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshesCount));
 	gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector.data(), sizeof(Mesh) * meshesCount, cudaMemcpyHostToDevice));
+
+	Light* cudaLights;
+	gpuErrorCheck(cudaMalloc(&cudaLights, sizeof(Light) * lightsCount));
+	gpuErrorCheck(cudaMemcpy(cudaLights, lights.data(), sizeof(Light) * lightsCount, cudaMemcpyHostToDevice));
 
 	gpuErrorCheck(cudaDeviceSynchronize());
 	gpuErrorCheck(cudaEventCreate(&stop));
@@ -1798,25 +1693,13 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 	gpuErrorCheck(cudaEventDestroy(start));
 	gpuErrorCheck(cudaEventDestroy(stop));
 
-	int photonMapSize = 0;
-	Photon* cudaPhotonMap;
-	Photon* photonMap;
-	if (photon)
-	{
-		photonMapSize = MAX_PHOTONS;
-		photonMap = BuildPhotonMap(photonMapSize, frame);
-
-		gpuErrorCheck(cudaMalloc(&cudaPhotonMap, sizeof(Photon) * photonMapSize));
-		gpuErrorCheck(cudaMemcpy(cudaPhotonMap, photonMap, sizeof(Photon) * photonMapSize, cudaMemcpyHostToDevice));
-	}
-
 	block = dim3(16, 9);
 	grid.x = ceil(ceil(width / TRACE_OUTER_LOOP_X) / block.x);
 	grid.y = ceil(ceil(height / TRACE_OUTER_LOOP_Y) / block.y);
 
 	gpuErrorCheck(cudaEventCreate(&start));
 	gpuErrorCheck(cudaEventRecord(start, 0));
-	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, spheresCount, 2, 1, dof, directLighting, directLightingConstant, cudaPhotonMap, photonMapSize, samplePerFrame, surface);
+	TracingLoop(cudaCamera, cudaSpheres, cudaMeshes, cudaLights, spheresCount, 2, lightsCount, dof, surface);
 	gpuErrorCheck(cudaDeviceSynchronize());
 	gpuErrorCheck(cudaEventCreate(&stop));
 	gpuErrorCheck(cudaEventRecord(stop, 0));
@@ -1825,12 +1708,10 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 	gpuErrorCheck(cudaEventDestroy(start));
 	gpuErrorCheck(cudaEventDestroy(stop));
 
-	if (photon)
+	for (auto & tree : treeVector)
 	{
-		delete photonMap;
-		cudaFree(cudaPhotonMap);
+		delete tree;
 	}
-	delete currentMesh.tree;
 	gpuErrorCheck(cudaFree(cudaCamera));
 	gpuErrorCheck(cudaFree(cudaSpheres));
 	for (auto & triangle : triangleVector)
@@ -1838,6 +1719,7 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 		gpuErrorCheck(cudaFree(triangle));
 	}
 	gpuErrorCheck(cudaFree(cudaMeshes));
+	gpuErrorCheck(cudaFree(cudaLights));
 }
 
 #pragma endregion Kernels
@@ -2028,7 +1910,7 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 					//frame = 0;
 					cudaDirty = false;
 				}
-				RenderRealTime(viewCudaSurfaceObject, enableDof, enablePhoton, enableDirectLighting, frame, samplePerFrame);
+				RenderRealTime(viewCudaSurfaceObject, enableDof, frame);
 			}
 			cudaDestroySurfaceObject(viewCudaSurfaceObject);
 
@@ -2251,20 +2133,23 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 				ImGui::SliderInt("Animation Length", &animationLength, 1, 592);
 				if (ImGui::Button("Load Objs"))
 				{
-					spheres.emplace_back(vec3(30, 100, 30), 8, Material(DIFF, vec3(1), vec3(2.2f, 2.2f, 2.2f)));
+					spheres.emplace_back(vec3(30, 100, 30), 8, Material(WATER, vec3(1), vec3(2.2f, 2.2f, 2.2f)));
 					spheresCount = spheres.size();
 					float percent = 0;
 
-					meshes.emplace_back(vec3(0, 0, 0), "Scene.obj", Material(DIFF));
+					meshes.emplace_back(vec3(0, 0, 0), "Board.obj", Material(DIFF));
 
 					for (int i = 0; i < animationLength; i++)
 					{
 						string oldName(to_string(i));
 						string fileName = string(4 - oldName.length(), '0') + oldName;
 						fileName.append(".obj");
-						meshes.emplace_back(vec3(0, 0, 0), fileName.c_str(), Material(TRANS));
+						meshes.emplace_back(vec3(0, 0, 0), fileName.c_str(), Material(WATER));
 					}
 					meshesCount = meshes.size();
+
+					lights.emplace_back(vec3(0.0f, 30.0f, 0.0f), vec3(1.0f, 1.0f, 1.0f), 1.0f);
+					lightsCount = lights.size();
 					isLoaded = true;
 				}
 			}

@@ -29,14 +29,15 @@ constexpr int TRACE_OUTER_LOOP_X = 4;
 constexpr int TRACE_OUTER_LOOP_Y = 3;
 constexpr float EPSILON = 1e-3f;
 constexpr float INF = 3.402823466e+38F;
-constexpr int MAX_DEPTH = 5;
+constexpr int MAX_DEPTH = 2;
 constexpr int ROULETTE_DEPTH = 3;
 constexpr bool ENABLE_SURFACE_ACNE = false;
+constexpr int QUEUE_SIZE = 32;
 
 using namespace glm;
 using namespace std;
 
-enum MaterialType { NONE, DIFF, GLOSS, TRANS, SPEC };
+enum MaterialType { NONE, DIFF, WATER, DISTANT };
 
 int oldTimeSinceStart = 0;
 float deltaTime = 0;
@@ -46,6 +47,7 @@ float deltaTime = 0;
 int animationLength = 1;
 int meshesCount = 0;
 int spheresCount = 0;
+int lightsCount = 0;
 bool isLoaded = false;
 
 // RealTime
@@ -81,7 +83,6 @@ bool enableDrawKDTree = false;
 bool enableGUI = true;
 bool isSavingImage = false;
 int imageSaveSamples = 10;
-int tracingGridProgress = 0;
 float memoryAllocTime = 0;
 float renderingTime = 0;
 int objectIndex = 0;
@@ -232,6 +233,5 @@ public:
 
 
 #pragma endregion KD Tree
-
 
 #endif
