@@ -33,11 +33,23 @@ constexpr int MAX_DEPTH = 5;
 constexpr int ROULETTE_DEPTH = 3;
 constexpr bool ENABLE_SURFACE_ACNE = false;
 
-
 using namespace glm;
 using namespace std;
 
 enum MaterialType { NONE, DIFF, GLOSS, TRANS, SPEC };
+
+// Scene
+struct Camera;
+struct Sphere;
+struct Mesh;
+struct Material;
+
+dim3 block, grid;
+Camera* camera;
+
+thrust::host_vector<Sphere> spheres;
+thrust::host_vector<Mesh> meshes;
+thrust::host_vector<Material> materials;
 
 int oldTimeSinceStart = 0;
 float deltaTime = 0;
@@ -74,7 +86,6 @@ bool enableDrawKDTree = false;
 bool enableGUI = true;
 bool isSavingImage = false;
 int imageSaveSamples = 10;
-int tracingGridProgress = 0;
 float memoryAllocTime = 0;
 float renderingTime = 0;
 int objectIndex = 0;
@@ -84,12 +95,6 @@ constexpr char* MATERIAL_TYPE_ARRAY[] = { "NONE", "DIFF", "GLOSS", "TRANS", "SPE
 constexpr int MAX_BUILD_PHOTON_TRHESHOLD = 5;
 constexpr int MAX_PHOTONS = 10000;
 
-// KD Tree
-#define ENABLE_KDTREE 0
-constexpr int KDTREE_THRESHOLD = 16;
-constexpr int KDTREE_MAX_STACK = 1024;
-constexpr int KDTREE_MAX_DEPTH = 11;
-
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
 {
 	if (code != cudaSuccess)
@@ -97,6 +102,23 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort =
 		fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
 		if (abort) exit(code);
 	}
+}
+
+template <typename T>
+struct KernelArray
+{
+	T*  array;
+	int size;
+};
+
+template <typename T>
+KernelArray<T> ConvertToKernel(thrust::device_vector<T>& dVec)
+{
+	KernelArray<T> kArray;
+	kArray.array = thrust::raw_pointer_cast(&dVec[0]);
+	kArray.size = (int) dVec.size();
+
+	return kArray;
 }
 
 __device__ unsigned int WangHash(unsigned int a)
@@ -139,6 +161,11 @@ BOOL SwapRedBlue32(FIBITMAP* dib)
 }
 
 #pragma region KD Tree
+
+#define ENABLE_KDTREE 0
+constexpr int KDTREE_THRESHOLD = 16;
+constexpr int KDTREE_MAX_STACK = 1024;
+constexpr int KDTREE_MAX_DEPTH = 11;
 
 template<class T>
 class DeviceStack {
