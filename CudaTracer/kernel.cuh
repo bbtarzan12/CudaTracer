@@ -29,7 +29,7 @@ constexpr int TRACE_OUTER_LOOP_X = 4;
 constexpr int TRACE_OUTER_LOOP_Y = 3;
 constexpr float EPSILON = 1e-3f;
 constexpr float INF = 3.402823466e+38F;
-constexpr int MAX_DEPTH = 5;
+constexpr int MAX_DEPTH = 100;
 constexpr int ROULETTE_DEPTH = 3;
 constexpr bool ENABLE_SURFACE_ACNE = false;
 

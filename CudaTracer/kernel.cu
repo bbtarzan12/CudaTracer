@@ -1386,42 +1386,6 @@ __device__ Ray GetReflectedRay(Ray ray, vec3 hitPoint, glm::vec3 normal, vec3 &m
 	}
 }
 
-// Photon Map (Building Photon Map)
-__device__ Photon TraceRay(Ray ray, vec3 lightEmission, KernelArray<Sphere> spheres, KernelArray<Mesh> meshes, curandState* randState)
-{
-	/*vec3 resultColor = lightEmission;
-	MaterialType beforeType = NONE;
-	for (int depth = 0; depth < 4; depth++)
-	{
-		ObjectIntersection intersection = Intersect(ray, spheres, meshes, sphereCount, meshCount);
-
-		if (intersection.hit == false) return Photon();
-
-		vec3 color = intersection.material.color;
-		float maxReflection = color.x > color.y && color.x > color.z ? color.x : color.y > color.z ? color.y : color.z;
-		float random = curand_uniform(randState);
-
-		vec3 position = ray.origin + ray.direction * intersection.t;
-
-		if (intersection.material.type == DIFF || intersection.material.type == GLOSS || intersection.material.type == SPEC)
-		{
-			if (beforeType == TRANS)
-			{
-				Photon photon = Photon();
-				photon.isHit = intersection.hit;
-				photon.normal = intersection.normal;
-				photon.position = position;
-				photon.type = intersection.material.type;
-				photon.power = resultColor;
-				return photon;
-			}
-		}
-		beforeType = intersection.material.type;
-		ray = GetReflectedRay(ray, spheres, meshes, sphereCount, meshCount, position, intersection.normal, resultColor, intersection.material, randState);
-	}*/
-	return Photon();
-}
-
 // Path Tracing + Photon Map
 __device__ vec3 TraceRay(Ray ray, KernelArray<Sphere> spheres, KernelArray<Triangle> triangles, KernelArray<Material> materials, bool directLighting, float directLightingConstant, curandState* randState)
 {
@@ -1456,8 +1420,13 @@ __device__ vec3 TraceRay(Ray ray, KernelArray<Sphere> spheres, KernelArray<Trian
 		Material hitMaterial = materials.array[intersection.materialID];
 		vec3 emission = hitMaterial.emission;
 
+		float maxReflection = max(max(mask.r, mask.g), mask.b);
+		if (curand_uniform(randState) > maxReflection)
+			break;
+
 		resultColor += mask * emission;
 		ray = GetReflectedRay(ray, hitPoint, intersection.normal, mask, hitMaterial, randState);
+		mask *= 1 / maxReflection;
 	}
 	return resultColor;
 }
@@ -1486,33 +1455,6 @@ __global__ void PathKernel(Camera* camera, KernelArray<Sphere> spheres, KernelAr
 	surf2Dwrite(make_float4(resultColor.r, resultColor.g, resultColor.b, 1.0f), surface, x * sizeof(float4), y);
 }
 
-// Kernel to Build Photon Map
-__global__ void PhotonMapKernel(Camera* camera, KernelArray<Sphere> spheres, KernelArray<Mesh> meshes, vec3 lightPos, vec3 lightEmission, int maxPhotons, Photon* map, int frame = 0)
-{
-	int i = threadIdx.x + blockDim.x*blockIdx.x;
-	if (i >= maxPhotons) return;
-
-	curandState randState;
-
-	Photon photon;
-	int threshold = MAX_BUILD_PHOTON_TRHESHOLD;
-	int count = 0;
-	while (!photon.isHit)
-	{
-		if (count > threshold)
-			break;
-		curand_init(WangHash(WangHash(i) + WangHash(count) + WangHash(maxPhotons) + WangHash(frame)), 0, 0, &randState);
-		count++;
-
-		float theta = 2 * pi<float>() * curand_uniform(&randState);
-		float phi = acos(1 - 2 * curand_uniform(&randState));
-		vec3 dir = normalize(vec3(__sinf(phi) * __cosf(theta), __sinf(phi) * __sinf(theta), __cosf(phi)));
-		Ray ray = Ray(lightPos, dir);
-		photon = TraceRay(ray, lightEmission, spheres, meshes, &randState);
-	}
-	map[i] = photon;
-}
-
 // Photon Mapping Rendering Loop
 void TracingLoop(Camera* camera, KernelArray<Sphere> spheres, KernelArray<Triangle> triangles, KernelArray<Material> materials, int frame, bool dof, bool directLighting, float directLightingConstant, cudaSurfaceObject_t surface)
 {
@@ -1525,91 +1467,6 @@ void TracingLoop(Camera* camera, KernelArray<Sphere> spheres, KernelArray<Triang
 			gpuErrorCheck(cudaDeviceSynchronize());
 		}
 	}
-}
-
-Photon* BuildPhotonMap(int maxPhotons, int frame = 0)
-{
-	Photon *photons, *cudaPhotonMap/*, *cudaDebugPhotonMap*/;
-
-	//vec3 lightPos = vec3(0, 50, 0);
-	//vec3 lightEmission = vec3(1.5, 1.5, 1.5);
-
-	//block = dim3(256, 1);
-	//grid.x = ceil(maxPhotons / block.x);
-	//grid.y = 1;
-
-	//gpuErrorCheck(cudaMalloc(&cudaPhotonMap, sizeof(Photon) * maxPhotons));
-	////gpuErrorCheck(cudaMalloc(&cudaDebugPhotonMap, sizeof(Photon) * maxPhotons));
-
-	//cudaEvent_t start, stop;
-	//float memoryAllocTime, renderingTime;
-	//cudaEventCreate(&start);
-	//cudaEventRecord(start, 0);
-
-	//Camera* cudaCamera;
-	//gpuErrorCheck(cudaMalloc(&cudaCamera, sizeof(Camera)));
-	//gpuErrorCheck(cudaMemcpy(cudaCamera, camera, sizeof(Camera), cudaMemcpyHostToDevice));
-
-	//int sphereCount = sizeof(spheres) / sizeof(Sphere);
-	//Sphere* cudaSpheres;
-	//gpuErrorCheck(cudaMalloc(&cudaSpheres, sizeof(Sphere) * sphereCount));
-	//gpuErrorCheck(cudaMemcpy(cudaSpheres, spheres, sizeof(Sphere) * sphereCount, cudaMemcpyHostToDevice));
-
-	//int meshCount = sizeof(meshes) / sizeof(Mesh);
-	//Mesh* cudaMeshes;
-	//std::vector<Mesh>* meshVector = new std::vector<Mesh>;
-	//std::vector<Triangle*> triangleVector;
-	//for (int i = 0; i < meshCount; i++)
-	//{
-	//	Mesh currentMesh = meshes[i];
-	//	Mesh cudaMesh = currentMesh;
-	//	Triangle* cudaTriangles;
-	//	gpuErrorCheck(cudaMalloc(&cudaTriangles, sizeof(Triangle) * currentMesh.count));
-	//	gpuErrorCheck(cudaMemcpy(cudaTriangles, currentMesh.triangles, sizeof(Triangle) * currentMesh.count, cudaMemcpyHostToDevice));
-	//	cudaMesh.triangles = cudaTriangles;
-	//	meshVector->push_back(cudaMesh);
-	//	triangleVector.push_back(cudaTriangles);
-	//}
-	//gpuErrorCheck(cudaMalloc(&cudaMeshes, sizeof(Mesh) * meshCount));
-	//gpuErrorCheck(cudaMemcpy(cudaMeshes, meshVector->data(), sizeof(Mesh) * meshCount, cudaMemcpyHostToDevice));
-
-	//gpuErrorCheck(cudaDeviceSynchronize());
-	//cudaEventCreate(&stop);
-	//cudaEventRecord(stop, 0);
-	//cudaEventSynchronize(stop);
-	//cudaEventElapsedTime(&memoryAllocTime, start, stop);
-	//cudaEventDestroy(start);
-	//cudaEventDestroy(stop);
-
-	//cudaEventCreate(&start);
-	//cudaEventRecord(start, 0);
-	//PhotonMapKernel << <grid, block >> > (cudaCamera, cudaSpheres, cudaMeshes, sphereCount, meshCount, lightPos, lightEmission, maxPhotons, cudaPhotonMap, frame);
-	//gpuErrorCheck(cudaDeviceSynchronize());
-	//cudaEventCreate(&stop);
-	//cudaEventRecord(stop, 0);
-	//cudaEventSynchronize(stop);
-	//cudaEventElapsedTime(&renderingTime, start, stop);
-	//cudaEventDestroy(start);
-	//cudaEventDestroy(stop);
-	//printf("Building Photon Map End | Memory Allocation Time : %f ms | Building time : %f ms\n", memoryAllocTime, renderingTime);
-
-	//photons = new Photon[maxPhotons];
-	//gpuErrorCheck(cudaMemcpy(photons, cudaPhotonMap, sizeof(Photon) * maxPhotons, cudaMemcpyDeviceToHost));
-
-	//cudaFree(cudaPhotonMap);
-	//cudaFree(cudaCamera);
-	//cudaFree(cudaSpheres);
-	//for (auto & triangle : triangleVector)
-	//{
-	//	cudaFree(triangle);
-	//}
-	//for (auto & mesh : *meshVector)
-	//{
-	//	cudaFree(&mesh);
-	//}
-	//delete meshVector;
-	//cudaFree(cudaMeshes);
-	return photons;
 }
 
 void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool directLighting, int frame)
@@ -2125,12 +1982,12 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 					if (ImGui::SliderFloat("Aperture", &(camera->aperture), EPSILON, 50))
 						cudaDirty = true;
 				}
-				if (ImGui::Checkbox("Enable Direct Lighting", &enableDirectLighting))
-					cudaDirty = true;
-				if (ImGui::Checkbox("Enable Photon Mapping", &enablePhoton))
-					cudaDirty = true;
-				if (ImGui::SliderFloat("Direct Lighting Weight", &directLightingConstant, EPSILON, 1000.0f))
-					cudaDirty = true;
+				//if (ImGui::Checkbox("Enable Direct Lighting", &enableDirectLighting))
+				//	cudaDirty = true;
+				//if (ImGui::Checkbox("Enable Photon Mapping", &enablePhoton))
+				//	cudaDirty = true;
+				//if (ImGui::SliderFloat("Direct Lighting Weight", &directLightingConstant, EPSILON, 1000.0f))
+				//	cudaDirty = true;
 
 				if (isSavingImage)
 				{
@@ -2140,7 +1997,7 @@ void RenderRealTime(cudaSurfaceObject_t surface, bool dof, bool photon, bool dir
 			}
 			else
 			{
-				ImGui::InputInt("Image Samples", &imageSaveSamples, 1, 100);
+				ImGui::InputInt("Image Samples", &imageSaveSamples, 1, 1000);
 				ImGui::SameLine();
 				if (ImGui::Button("Save Image"))
 				{
